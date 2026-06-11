@@ -1,0 +1,38 @@
+{
+  "name": "misonos-ux11",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build -w @misonos/sonos-protocol && node scripts/dev.mjs",
+    "dev:web": "npm run dev -w @misonos/web",
+    "dev:bridge": "npm run dev -w @misonos/bridge",
+    "build": "npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge && npm run build -w @misonos/web",
+    "test": "npm run build -w @misonos/sonos-protocol && npm run test -w @misonos/sonos-protocol && npm run test -w @misonos/bridge && npm run test -w @misonos/web",
+    "typecheck": "npm run build -w @misonos/sonos-protocol && npm run typecheck -w @misonos/bridge && npm run typecheck -w @misonos/web",
+    "lint": "npm run lint -w @misonos/sonos-protocol && npm run lint -w @misonos/bridge && npm run lint -w @misonos/web"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.29.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.0.3",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.5.2",
+    "eslint": "^9.29.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.2.0",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.34.1",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}
