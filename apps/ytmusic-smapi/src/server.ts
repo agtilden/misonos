@@ -58,7 +58,7 @@ export function createServer(config: YtmConfig): http.Server {
         const raw = await readBody(request);
         try {
           const parsed = parseSoapRequest(raw);
-          console.log(`[smapi] ${parsed.action}`);
+          console.log(`[smapi] ${parsed.action} from ${request.socket.remoteAddress}`);
           const result = await smapiDispatch(parsed.action, parsed.body);
           return respondSoap(response, result);
         } catch (error) {

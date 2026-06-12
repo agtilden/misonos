@@ -74,6 +74,10 @@ export interface SmapiAccountScanResult {
 export class SonosService {
   private zones = new Map<string, SonosZone>();
   private groups = new Map<string, SonosGroup>();
+  // Metadata for tracks enqueued as SMAPI URIs, keyed "sourceId\ntrackId".
+  // S1 firmware normalizes queue DIDL (title becomes the raw URI), so
+  // now-playing/queue views resolve display metadata from the source instead.
+  private smapiTrackMeta = new Map<string, SourceTrackInfo>();
   private lastDiscovery = 0;
   private rediscoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private rediscoveryInProgress = false;
@@ -165,20 +169,44 @@ export class SonosService {
       ]);
       const baseUrl = `http://${coordinator.ipAddress}:1400`;
       const item = firstDidlItem(position.TrackMetaData, baseUrl);
+      const smapiMeta = await this.smapiTrackForUri(position.TrackURI);
       return {
         groupId,
         state: normalizePlaybackState(transport.CurrentTransportState),
-        title: item?.title ?? position.TrackURI ?? "Nothing playing",
-        artist: item?.artist,
-        album: item?.album,
-        albumArtUri: item?.albumArtUri ?? albumArtFromPosition(position, baseUrl),
-        duration: position.TrackDuration,
+        title: smapiMeta?.title ?? item?.title ?? position.TrackURI ?? "Nothing playing",
+        artist: smapiMeta?.artist ?? item?.artist,
+        album: smapiMeta?.album ?? item?.album,
+        albumArtUri: smapiMeta?.albumArtUri ?? item?.albumArtUri ?? albumArtFromPosition(position, baseUrl),
+        duration: usableDuration(position.TrackDuration) ?? formatDuration(smapiMeta?.durationSeconds),
         position: position.RelTime,
         playlistPosition: numericPosition(position.Track),
         uri: position.TrackURI,
         updatedAt: new Date().toISOString()
       };
     });
+  }
+
+  // Map an x-sonos-http SMAPI URI back to source-track metadata. Cache-first;
+  // falls back to fetching from the source (e.g. after a bridge restart).
+  private async smapiTrackForUri(uri: string | undefined): Promise<SourceTrackInfo | undefined> {
+    const parsed = parseSmapiUri(uri);
+    if (!parsed) return undefined;
+    const key = `${parsed.sourceId}\n${parsed.trackId}`;
+    const cached = this.smapiTrackMeta.get(key);
+    if (cached) return cached;
+    try {
+      const track = await fetchTrack(parsed.sourceId, parsed.trackId);
+      this.smapiTrackMeta.set(key, track);
+      return track;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private smapiTrackFromCache(uri: string | undefined): SourceTrackInfo | undefined {
+    const parsed = parseSmapiUri(uri);
+    if (!parsed) return undefined;
+    return this.smapiTrackMeta.get(`${parsed.sourceId}\n${parsed.trackId}`);
   }
 
   async queue(groupId: string): Promise<QueueItem[]> {
@@ -193,7 +221,19 @@ export class SonosService {
         RequestedCount: 100,
         SortCriteria: ""
       });
-      return parseDidlItems(response.Result, `http://${coordinator.ipAddress}:1400`);
+      const items = parseDidlItems(response.Result, `http://${coordinator.ipAddress}:1400`);
+      // Cache-only enrichment (no per-item source fetches in a polling path).
+      return items.map((item) => {
+        const meta = this.smapiTrackFromCache(item.uri);
+        if (!meta) return item;
+        return {
+          ...item,
+          title: meta.title ?? item.title,
+          artist: meta.artist ?? item.artist,
+          album: meta.album ?? item.album,
+          albumArtUri: meta.albumArtUri ?? item.albumArtUri
+        };
+      });
     });
   }
 
@@ -521,21 +561,23 @@ export class SonosService {
     const group = await this.requireGroup(options.groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
     const tracks = await Promise.all(options.trackIds.map((trackId) => fetchTrack(options.sourceId, trackId)));
+    tracks.forEach((track, index) => {
+      this.smapiTrackMeta.set(`${options.sourceId}\n${options.trackIds[index]}`, track);
+    });
     const bridgeHost = this.publicHost();
     if (!bridgeHost) throw new Error("Could not determine bridge LAN IP for stream proxy");
     const queueItems = tracks.map((track, index) => {
       const ext = extensionForMime(track.mimeType);
       const titleSlug = urlSafeSlug(track.title);
       const proxyUrl = `http://${bridgeHost}:${this.config.port}/api/stream/${encodeURIComponent(options.sourceId)}/${encodeURIComponent(options.trackIds[index])}/${titleSlug}${ext}`;
-      // For sources registered as a Sonos SMAPI custom service (sid=255 by
-      // default), use the x-sonosapi-stream:// URI scheme so Sonos calls our
-      // SMAPI endpoint for the actual URL + metadata. Required for non-mp3
-      // streams (audio/mp4) where S1 ignores DIDL on plain http URIs.
+      // For sources registered as a Sonos SMAPI custom service (sid 240 by
+      // default), use an x-sonos-http URI so Sonos calls our SMAPI endpoint
+      // for the actual URL + metadata. Required for non-mp3 streams
+      // (audio/mp4) where S1 ignores DIDL on plain http URIs.
       const smapi = SMAPI_SOURCE_INFO[options.sourceId];
       if (smapi) {
-        // x-sonos-http on-demand URI. sid here is the raw sid (255 for custom),
-        // and serviceTokenMagic is what goes into the desc <SA_RINCON...>
-        // binding, not the URI sid. S1's sid=255 custom slot uses 65280.
+        // sid here is the raw sid in the URI; serviceTokenMagic (sid*256) is
+        // what goes into the <desc> SA_RINCON binding, not the URI sid.
         const smapiUri = `x-sonos-http:${encodeURIComponent(options.trackIds[index])}${ext}?sid=${smapi.sid}&flags=8224&sn=${smapi.sn}`;
         const metadata = buildSmapiDidl({
           ...track,
@@ -849,15 +891,44 @@ interface SmapiSourceInfo {
 }
 
 const SMAPI_SOURCE_INFO: Record<string, SmapiSourceInfo> = {
-  // S1 customsd accepts raw sid=255, but x-sonos-http queue parsing only
-  // accepts the legacy custom-service token id Svc65280 for that slot.
+  // sid 255 is accepted by customsd ("Success!") but silently dropped — it
+  // never appears in ListAvailableServices, so Play always fails with 701.
+  // sids 240-253 register for real on S1 11.15.1. The desc magic must be
+  // sid*256 (low byte 0); the sid*256+7 form is rejected at queue time (800).
   "youtube-music": {
-    sid: 255,
+    sid: Number.parseInt(process.env.MISONOS_YTM_SID ?? "240", 10),
     sn: Number.parseInt(process.env.MISONOS_YTM_SN ?? "0", 10),
-    serviceTokenMagic: 65280,
-    descMode: "token"
+    serviceTokenMagic: Number.parseInt(process.env.MISONOS_YTM_MAGIC ?? "61440", 10),
+    descMode: "anonymous"
   }
 };
+
+function parseSmapiUri(uri: string | undefined): { sourceId: string; trackId: string } | undefined {
+  if (!uri) return undefined;
+  const match = uri.match(/^(?:x-sonos-http|x-sonosapi-stream):([^?]+)\?(?:[^#]*&)?sid=(\d+)/);
+  if (!match) return undefined;
+  const sid = Number.parseInt(match[2], 10);
+  const entry = Object.entries(SMAPI_SOURCE_INFO).find(([, info]) => info.sid === sid);
+  if (!entry) return undefined;
+  // Path is encodeURIComponent(trackId) plus an optional bare extension; the
+  // track id itself never contains an unencoded dot.
+  const trackId = decodeURIComponent(match[1].replace(/\.[A-Za-z0-9]{2,5}$/, ""));
+  return { sourceId: entry[0], trackId };
+}
+
+function usableDuration(duration: string | undefined): string | undefined {
+  if (!duration || duration === "0:00:00" || duration === "NOT_IMPLEMENTED") return undefined;
+  return duration;
+}
+
+function formatDuration(seconds: number | undefined): string | undefined {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return undefined;
+  const whole = Math.round(seconds);
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor((whole % 3600) / 60);
+  const s = whole % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 function buildSmapiDidl(
   track: SourceTrackInfo & { id: string },
@@ -869,8 +940,11 @@ function buildSmapiDidl(
   const desc = descMode === "token"
     ? `SA_RINCON${smapi.serviceTokenMagic}_X_#Svc${smapi.serviceTokenMagic}-0-Token`
     : `SA_RINCON${smapi.serviceTokenMagic}_`;
+  // 00032020 marks a music-service track item; with it, the firmware resolves
+  // display metadata (title/artist/art) via SMAPI getMediaMetadata.
+  const itemId = `00032020${encodeURIComponent(track.id)}`;
   const inner =
-    `<item id="${escapeXml(track.id)}" parentID="-1" restricted="true">` +
+    `<item id="${escapeXml(itemId)}" parentID="-1" restricted="true">` +
     `<dc:title>${escapeXml(track.title)}</dc:title>` +
     (track.artist ? `<dc:creator>${escapeXml(track.artist)}</dc:creator>` : "") +
     (track.album ? `<upnp:album>${escapeXml(track.album)}</upnp:album>` : "") +

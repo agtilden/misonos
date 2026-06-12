@@ -1,5 +1,5 @@
+import { networkInterfaces } from "node:os";
 import { decodeId, encodeId } from "./ids.js";
-import { getStreamUrl } from "./client.js";
 import { getTrackInfo } from "./ytmApi.js";
 import { escapeXml, extractTagText, soapResponse, soapFault } from "./soap.js";
 
@@ -88,14 +88,24 @@ async function handleGetMediaURI(body: string): Promise<string> {
   const rawId = extractTagText(body, "id") ?? "";
   const id = decodeId(rawId);
   if (id.kind !== "track") throw new Error("Not a track id");
-  const stream = await getStreamUrl(id.videoId);
-  const inner =
-    `<getMediaURIResult>${escapeXml(stream.url)}</getMediaURIResult>` +
-    `<httpHeaders>` +
-    `<httpHeader>` +
-    `<header>User-Agent</header>` +
-    `<value>Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36</value>` +
-    `</httpHeader>` +
-    `</httpHeaders>`;
+  // S1 hardware (ZP100 era) can't reliably fetch googlevideo HTTPS URLs, so
+  // hand Sonos the bridge's plain-HTTP stream proxy instead of the raw URL.
+  const inner = `<getMediaURIResult>${escapeXml(bridgeStreamUrl(id.videoId))}</getMediaURIResult>`;
   return soapResponse("getMediaURI", inner);
+}
+
+function bridgeStreamUrl(videoId: string): string {
+  const base = process.env.MISONOS_STREAM_BASE ?? `http://${detectLanIp() ?? "127.0.0.1"}:4317`;
+  const trackId = encodeURIComponent(encodeId({ kind: "track", videoId }));
+  return `${base}/api/stream/youtube-music/${trackId}.m4a`;
+}
+
+function detectLanIp(): string | null {
+  for (const list of Object.values(networkInterfaces())) {
+    if (!list) continue;
+    for (const iface of list) {
+      if (iface.family === "IPv4" && !iface.internal) return iface.address;
+    }
+  }
+  return null;
 }

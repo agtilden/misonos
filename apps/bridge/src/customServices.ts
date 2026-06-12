@@ -106,10 +106,12 @@ export async function registerCustomService(options: {
 
     const form = new URLSearchParams();
     form.set("csrfToken", csrfMatch[1]);
-    form.set("sid", options.sid ?? "255");
+    form.set("sid", options.sid ?? DEFAULT_CUSTOM_SID);
     form.set("name", options.preset.name);
     form.set("uri", options.uri);
-    form.set("secureUri", options.secureUri ?? "");
+    // A blank secureUri renders the service unplayable (Play fails with 701
+    // even though registration reports Success) — mirror the plain-http uri.
+    form.set("secureUri", options.secureUri || options.uri);
     form.set("pollInterval", String(options.preset.pollInterval));
     form.set("authType", options.preset.authType);
     form.set("containerType", options.preset.containerType);
@@ -140,7 +142,7 @@ export async function registerCustomService(options: {
     let refreshError: string | undefined;
     let accountType: string | undefined;
     try {
-      const sid = options.sid ?? "255";
+      const sid = options.sid ?? DEFAULT_CUSTOM_SID;
       accountType = accountTypeForCustomSid(sid);
       const accountResult = await callSoap(options.speakerIp, "SystemProperties", "AddAccountX", {
         AccountType: accountType,
@@ -166,9 +168,12 @@ export async function registerCustomService(options: {
   }
 }
 
+// sid 255 is silently dropped by S1 firmware (customsd answers "Success!" but
+// the service never appears in ListAvailableServices); 240-253 register for real.
+export const DEFAULT_CUSTOM_SID = "240";
+
 function accountTypeForCustomSid(sid: string): string {
-  // The S1 customsd form accepts raw sid=255, but queue/playback metadata for
-  // that slot is keyed as Svc65280 rather than the usual sid*256+7 service type.
-  if (sid === "255") return "65280";
-  return sid;
+  // Queue/playback desc binding is keyed as Svc{sid*256} (low byte 0), not the
+  // sid*256+7 service type that ListAvailableServices reports.
+  return String(Number.parseInt(sid, 10) * 256);
 }

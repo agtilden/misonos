@@ -50,7 +50,10 @@ export function soapResponse(action: string, innerXml: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>` +
     `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">` +
     `<soap:Body>` +
-    `<ns:${action}Response xmlns:ns="${SMAPI_NAMESPACE}">${innerXml}</ns:${action}Response>` +
+    // Default namespace (not a prefix) so child elements like getMediaURIResult
+    // are namespace-qualified too — the SMAPI schema is elementFormDefault="qualified"
+    // and S1 firmware silently ignores unqualified result elements.
+    `<${action}Response xmlns="${SMAPI_NAMESPACE}">${innerXml}</${action}Response>` +
     `</soap:Body></soap:Envelope>`;
 }
 

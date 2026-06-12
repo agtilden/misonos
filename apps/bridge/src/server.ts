@@ -164,6 +164,7 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
 
     const streamMatch = url.pathname.match(/^\/api\/stream\/([^/]+)\/([^/]+?)(?:\.[A-Za-z0-9]{2,5})?(?:\/[^/]+)?$/);
     if (streamMatch && (request.method === "GET" || request.method === "HEAD")) {
+      console.log(`[stream] ${request.socket.remoteAddress} ${request.method} ${request.url} range=${request.headers.range ?? "-"}`);
       const sourceId = decodeURIComponent(streamMatch[1]);
       const trackId = decodeURIComponent(streamMatch[2]);
       await proxyStream(sourceId, trackId, request, response);
