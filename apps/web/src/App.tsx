@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, ChevronDown, ListEnd, ListPlus, Pause, Play, RefreshCw, Settings, SkipBack, SkipForward, Square, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, AudioLines, ChevronDown, ListEnd, ListPlus, Pause, Play, RefreshCw, Settings, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
 import { IconCategoryPlus, IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, NowPlaying, QueueItem, SonosGroup, SonosZone, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -28,6 +28,7 @@ export function App() {
   const [pendingGroupEdits, setPendingGroupEdits] = useState<PendingGroupEdit[]>([]);
   const [state, setState] = useState<LoadState>("idle");
   const [view, setView] = useState<"main" | "settings" | "browse" | "editor">("main");
+  const [artworkFullscreen, setArtworkFullscreen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
   const groupEditQueueRef = useRef<PendingGroupEdit[]>([]);
@@ -387,6 +388,7 @@ export function App() {
       {view === "settings" ? (
         <section className="settings-page" aria-label="Settings">
           <AboutSystem />
+          <YouTubeMusicAuth />
           <CustomMusicServices zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
           <MusicServicesDebug />
           <BrowseDebug />
@@ -406,12 +408,17 @@ export function App() {
             />
           </Suspense>
         </section>
-      ) : (
+      ) : view === "main" ? (
       <section className="controller-grid main-view">
         <section className="now-playing" aria-label="Now playing">
-          <div className="artwork-frame">
+          <button
+            type="button"
+            className="artwork-frame"
+            aria-label="Expand album art"
+            onClick={() => setArtworkFullscreen(true)}
+          >
             {nowPlaying?.albumArtUri ? <img src={nowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
-          </div>
+          </button>
           <div className="track-copy">
             <p className="eyebrow">{nowPlaying?.state ?? "UNKNOWN"}</p>
             <h2>{nowPlaying?.title ?? "Nothing selected"}</h2>
@@ -443,15 +450,21 @@ export function App() {
             <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!selectedGroup} onClick={() => void runTransport("previous")}>
               <SkipBack size={22} />
             </button>
-            <button className="icon-button large primary" type="button" title="Play" aria-label="Play" disabled={!selectedGroup} onClick={() => void runTransport("play")}>
-              <Play size={24} />
-            </button>
-            <button className="icon-button large" type="button" title="Pause" aria-label="Pause" disabled={!selectedGroup} onClick={() => void runTransport("pause")}>
-              <Pause size={22} />
-            </button>
-            <button className="icon-button large" type="button" title="Stop" aria-label="Stop" disabled={!selectedGroup} onClick={() => void runTransport("stop")}>
-              <Square size={20} />
-            </button>
+            {(() => {
+              const playing = nowPlaying?.state === "PLAYING";
+              return (
+                <button
+                  className="icon-button large primary"
+                  type="button"
+                  title={playing ? "Pause" : "Play"}
+                  aria-label={playing ? "Pause" : "Play"}
+                  disabled={!selectedGroup}
+                  onClick={() => void runTransport(playing ? "pause" : "play")}
+                >
+                  {playing ? <Pause size={22} /> : <Play size={24} />}
+                </button>
+              );
+            })()}
             <button className="icon-button large" type="button" title="Next" aria-label="Next" disabled={!selectedGroup} onClick={() => void runTransport("next")}>
               <SkipForward size={22} />
             </button>
@@ -521,7 +534,24 @@ export function App() {
           )}
         </section>
       </section>
-      )}
+      ) : null}
+      {artworkFullscreen && nowPlaying?.albumArtUri ? (
+        <div className="artwork-overlay" role="dialog" aria-label="Now playing artwork" onClick={() => setArtworkFullscreen(false)}>
+          <button
+            type="button"
+            className="artwork-overlay-close"
+            aria-label="Close"
+            onClick={(event) => { event.stopPropagation(); setArtworkFullscreen(false); }}
+          >
+            <X size={22} />
+          </button>
+          <img src={nowPlaying.albumArtUri} alt="" />
+          <div className="artwork-overlay-meta">
+            <h2>{nowPlaying.title}</h2>
+            <p>{[nowPlaying.artist, nowPlaying.album].filter(Boolean).join(" - ")}</p>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -657,6 +687,15 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
     try { window.localStorage.setItem(SOURCE_STORAGE_KEY, id); } catch { /* ignore */ }
   }, []);
   const [stack, setStack] = useState<BrowseCrumb[]>([]);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  useEffect(() => {
+    const onAuthChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceId?: string }>).detail;
+      if (!detail?.sourceId || detail.sourceId === sourceId) setRefreshNonce((n) => n + 1);
+    };
+    window.addEventListener("misonos:source-auth-changed", onAuthChange);
+    return () => window.removeEventListener("misonos:source-auth-changed", onAuthChange);
+  }, [sourceId]);
   const [data, setData] = useState<Awaited<ReturnType<typeof bridgeApi.browseSource>> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -669,9 +708,11 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
   }, [status]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchActive, setSearchActive] = useState(false);
+  const [searchType, setSearchType] = useState<"song" | "artist" | "album">("song");
 
   const activeSource = sources?.find((entry) => entry.id === sourceId);
   const supportsSearch = activeSource?.capabilities?.includes("search") ?? false;
+  const supportsTypedSearch = sourceId === "youtube-music";
 
   const browseGroupOptions = useMemo(
     () => groups.map((group) => {
@@ -688,21 +729,21 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
     [groups]
   );
 
-  const runSearch = useCallback(async () => {
+  const runSearch = useCallback(async (overrideType?: "song" | "artist" | "album") => {
     if (!sourceId || !searchQuery.trim()) return;
     setLoading(true);
     setError("");
     setSearchActive(true);
+    const type = supportsTypedSearch ? (overrideType ?? searchType) : undefined;
     try {
-      const next = await bridgeApi.searchSource(sourceId, searchQuery.trim());
+      const next = await bridgeApi.searchSource(sourceId, searchQuery.trim(), type);
       setData(next);
-      setStack([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
     } finally {
       setLoading(false);
     }
-  }, [sourceId, searchQuery]);
+  }, [sourceId, searchQuery, searchType, supportsTypedSearch]);
 
   const clearSearch = useCallback(() => {
     setSearchQuery("");
@@ -740,9 +781,10 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
         setLoading(false);
       }
     })();
-  }, [sourceId, stack, searchActive]);
+  }, [sourceId, stack, searchActive, refreshNonce]);
 
   const drill = useCallback((item: { id: string; title: string }) => {
+    setSearchActive(false);
     setStack((current) => [...current, { id: item.id, title: item.title }]);
   }, []);
 
@@ -776,7 +818,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
     }
   }, [sourceId, selectedGroupId, data]);
 
-  const enqueueItem = useCallback(async (item: { id: string; title: string; kind: "container" | "album" | "playable" }, mode: "replace" | "next" | "end") => {
+  const enqueueItem = useCallback(async (item: { id: string; title: string; kind: "container" | "album" | "playable" | "section" }, mode: "replace" | "next" | "end") => {
     if (!sourceId || !selectedGroupId) {
       setStatus({ ok: false, message: "Pick a group first." });
       return;
@@ -838,26 +880,50 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
             onSelect={onSelectGroup}
           />
         </label>
-        {supportsSearch ? (
-          <label className="browse-search-label">
-            <span>Search</span>
-            <form
-              onSubmit={(event) => { event.preventDefault(); void runSearch(); }}
-              style={{ display: "flex", gap: 6 }}
-            >
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder={`Search ${activeSource?.name ?? ""}`}
-              />
-              {searchActive ? (
-                <button type="button" onClick={clearSearch} className="browse-search-clear">Clear</button>
-              ) : null}
-            </form>
-          </label>
-        ) : null}
       </div>
+      {supportsSearch ? (
+        <div className="browse-search-label">
+          <span>Search</span>
+          <form
+            onSubmit={(event) => { event.preventDefault(); void runSearch(); }}
+            style={{ display: "flex", gap: 6 }}
+          >
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={`Search ${activeSource?.name ?? ""}`}
+              enterKeyHint="search"
+            />
+            {searchActive ? (
+              <button type="button" onClick={clearSearch} className="browse-search-clear">Clear</button>
+            ) : null}
+          </form>
+          {supportsTypedSearch ? (
+            <div className="browse-search-types" role="tablist">
+              {([
+                { value: "song", label: "Songs" },
+                { value: "artist", label: "Artists" },
+                { value: "album", label: "Albums" }
+              ] as const).map((entry) => (
+                <button
+                  key={entry.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={searchType === entry.value}
+                  className={searchType === entry.value ? "selected" : undefined}
+                  onClick={() => {
+                    setSearchType(entry.value);
+                    if (searchQuery.trim()) void runSearch(entry.value);
+                  }}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {(() => {
         const playableCount = (data?.items ?? []).filter((entry) => entry.kind === "playable").length;
@@ -882,7 +948,13 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
       })()}
 
       <nav className="browse-crumbs" aria-label="Path">
-        <button type="button" onClick={() => pop(0)}>Root</button>
+        {stack.length === 0 ? (
+          <span className="browse-crumb-placeholder" aria-hidden="true" />
+        ) : (
+          <button type="button" className="browse-crumb-reset" aria-label="Return to root" onClick={() => pop(0)}>
+            <X size={14} />
+          </button>
+        )}
         {stack.map((crumb, index) => (
           <span key={`${crumb.id}-${index}`}>
             <span className="browse-crumb-sep">/</span>
@@ -901,6 +973,13 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
         ) : (
           <ol className="browse-list">
             {data.items.map((item) => {
+              if (item.kind === "section") {
+                return (
+                  <li key={item.id} className="browse-section">
+                    {item.title}
+                  </li>
+                );
+              }
               if (item.kind === "container") {
                 return (
                   <li key={item.id}>
@@ -1213,6 +1292,91 @@ function swGenLabel(value: string | undefined): string | undefined {
   if (value === "1") return "S1";
   if (value === "2") return "S2";
   return value;
+}
+
+function YouTubeMusicAuth() {
+  type Status = { state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number };
+  const [status, setStatus] = useState<Status | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await bridgeApi.sourceAuthStatus("youtube-music"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to read auth status");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const [polling, setPolling] = useState(false);
+  useEffect(() => {
+    if (!polling && status?.state !== "pending") return undefined;
+    const interval = window.setInterval(refresh, 2500);
+    return () => window.clearInterval(interval);
+  }, [polling, status?.state, refresh]);
+
+  const prevState = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (status?.state === "signed-in") setPolling(false);
+    if (prevState.current && prevState.current !== status?.state) {
+      window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
+    }
+    prevState.current = status?.state;
+  }, [status?.state]);
+
+  const start = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    setPolling(true);
+    try {
+      setStatus(await bridgeApi.sourceAuthStart("youtube-music"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign-in failed");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      setStatus(await bridgeApi.sourceAuthSignOut("youtube-music"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign-out failed");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return (
+    <section className="settings-card">
+      <h3>YouTube Music</h3>
+      <p className="settings-card-help">Optional. Signed-in mode unlocks Home, Charts, New Releases, Your Library, and higher-quality streams.</p>
+      {error ? <p className="settings-card-error">{error}</p> : null}
+      {status?.state === "signed-in" ? (
+        <div className="settings-card-row">
+          <span>Signed in.</span>
+          <button type="button" disabled={busy} onClick={() => void signOut()}>Sign out</button>
+        </div>
+      ) : status?.state === "pending" && status.verificationUrl && status.userCode ? (
+        <div className="settings-card-row settings-card-column">
+          <span>Open <a href={status.verificationUrl} target="_blank" rel="noreferrer">{status.verificationUrl}</a> and enter:</span>
+          <strong className="settings-card-code">{status.userCode}</strong>
+          <span className="settings-card-help">Status will update automatically when you finish.</span>
+        </div>
+      ) : (
+        <div className="settings-card-row">
+          <span>Not signed in. Anonymous search works without sign-in.</span>
+          <button type="button" disabled={busy} onClick={() => void start()}>Sign in with Google</button>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function MusicServicesDebug() {

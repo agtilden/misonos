@@ -42,7 +42,8 @@ export interface PhishVenue {
 }
 
 export interface PhishTour {
-  id: number;
+  id?: number;
+  slug?: string;
   name: string;
   starts_on?: string;
   ends_on?: string;
@@ -109,8 +110,8 @@ export class PhishApi {
     return readArray<PhishShow>(data, "shows").sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
   }
 
-  async showsByTour(slug: string): Promise<PhishShow[]> {
-    const data = await this.get<unknown>(`/shows?tour_slug=${encodeURIComponent(slug)}&per_page=400`);
+  async showsByTour(tourId: string): Promise<PhishShow[]> {
+    const data = await this.get<unknown>(`/tours/${encodeURIComponent(tourId)}`);
     return readArray<PhishShow>(data, "shows").sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
   }
 

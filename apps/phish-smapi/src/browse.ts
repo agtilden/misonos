@@ -68,13 +68,17 @@ export class PhishBrowser {
       }
       case "tours": {
         const tours = await this.cached("tours", () => this.api.tours());
-        return tours.map((tour) =>
-          container(
-            encodeId({ kind: "tour", tourId: (tour as unknown as { slug?: string }).slug ?? String(tour.id) }),
-            tour.name,
-            [tour.starts_on, tour.ends_on].filter(Boolean).join(" → ")
-          )
-        );
+        return tours
+          .map((tour) => {
+            const tourId = tour.slug ?? (typeof tour.id === "number" ? String(tour.id) : tourSlugFromName(tour.name));
+            if (!tourId) return null;
+            return container(
+              encodeId({ kind: "tour", tourId }),
+              tour.name,
+              [tour.starts_on, tour.ends_on].filter(Boolean).join(" → ")
+            );
+          })
+          .filter((item): item is SourceBrowseItem => item !== null);
       }
       case "year": {
         const shows = await this.api.showsByYear(id.year);
@@ -121,6 +125,12 @@ function container(id: string, title: string, subtitle?: string): SourceBrowseIt
   return { id, title, kind: "container", subtitle };
 }
 
+function tourSlugFromName(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return slug || undefined;
+}
+
 function showItem(show: PhishShow): SourceBrowseItem {
   const venue = show.venue?.name ?? show.venue_name;
   const location = show.venue?.location;
@@ -134,7 +144,7 @@ function showItem(show: PhishShow): SourceBrowseItem {
 }
 
 function trackItem(track: PhishTrack, show: PhishShow): SourceBrowseItem {
-  const positionLabel = typeof track.position === "number" ? `${track.position + 1}.` : "";
+  const positionLabel = typeof track.position === "number" ? `${track.position}.` : "";
   const title = positionLabel ? `${positionLabel} ${track.title}` : track.title;
   return {
     id: encodeId({ kind: "track", trackId: String(track.id) }),

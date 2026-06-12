@@ -70,8 +70,16 @@ export const bridgeApi = {
     const query = id ? `?id=${encodeURIComponent(id)}` : "";
     return request<SourceBrowseResponse>(`/api/sources/${encodeURIComponent(sourceId)}/browse${query}`);
   },
-  searchSource: (sourceId: string, query: string) =>
-    request<SourceBrowseResponse>(`/api/sources/${encodeURIComponent(sourceId)}/search?q=${encodeURIComponent(query)}`),
+  searchSource: (sourceId: string, query: string, type?: string) => {
+    const typeParam = type ? `&type=${encodeURIComponent(type)}` : "";
+    return request<SourceBrowseResponse>(`/api/sources/${encodeURIComponent(sourceId)}/search?q=${encodeURIComponent(query)}${typeParam}`);
+  },
+  sourceAuthStatus: (sourceId: string) =>
+    request<{ state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number }>(`/api/sources/${encodeURIComponent(sourceId)}/auth/status`),
+  sourceAuthStart: (sourceId: string) =>
+    request<{ state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number }>(`/api/sources/${encodeURIComponent(sourceId)}/auth/start`, { method: "POST", body: "{}" }),
+  sourceAuthSignOut: (sourceId: string) =>
+    request<{ state: "signed-out" }>(`/api/sources/${encodeURIComponent(sourceId)}/auth/signout`, { method: "POST", body: "{}" }),
   playSourceItems: (sourceId: string, body: { trackIds: string[]; groupId: string; mode: PlaybackMode }) =>
     request<NowPlaying>(`/api/sources/${encodeURIComponent(sourceId)}/play`, { method: "POST", body: JSON.stringify(body) }),
   customServicePresets: () => request<CustomServicePresetView[]>("/api/music/custom-presets"),
