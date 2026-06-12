@@ -11,10 +11,13 @@
     "dev": "npm run build -w @misonos/sonos-protocol && node scripts/dev.mjs",
     "dev:web": "npm run dev -w @misonos/web",
     "dev:bridge": "npm run dev -w @misonos/bridge",
-    "build": "npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge && npm run build -w @misonos/web",
+    "dev:grateful": "npm run dev -w @misonos/grateful-smapi",
+    "dev:phish": "npm run dev -w @misonos/phish-smapi",
+    "dev:ytmusic": "npm run dev -w @misonos/ytmusic-smapi",
+    "build": "npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge && npm run build -w @misonos/grateful-smapi && npm run build -w @misonos/phish-smapi && npm run build -w @misonos/ytmusic-smapi && npm run build -w @misonos/web",
     "test": "npm run build -w @misonos/sonos-protocol && npm run test -w @misonos/sonos-protocol && npm run test -w @misonos/bridge && npm run test -w @misonos/web",
-    "typecheck": "npm run build -w @misonos/sonos-protocol && npm run typecheck -w @misonos/bridge && npm run typecheck -w @misonos/web",
-    "lint": "npm run lint -w @misonos/sonos-protocol && npm run lint -w @misonos/bridge && npm run lint -w @misonos/web"
+    "typecheck": "npm run build -w @misonos/sonos-protocol && npm run typecheck -w @misonos/bridge && npm run typecheck -w @misonos/grateful-smapi && npm run typecheck -w @misonos/phish-smapi && npm run typecheck -w @misonos/ytmusic-smapi && npm run typecheck -w @misonos/web",
+    "lint": "npm run lint -w @misonos/sonos-protocol && npm run lint -w @misonos/bridge && npm run lint -w @misonos/grateful-smapi && npm run lint -w @misonos/phish-smapi && npm run lint -w @misonos/ytmusic-smapi && npm run lint -w @misonos/web"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",

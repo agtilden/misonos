@@ -1,4 +1,4 @@
-import type { BridgeEvent, BridgeSnapshot, NowPlaying, QueueItem, SonosGroup, SonosZone, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
+import type { BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, MusicServiceDiscovery, NowPlaying, PlaybackMode, QueueItem, RegisterCustomServiceResult, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -38,6 +38,11 @@ export const bridgeApi = {
       method: "POST",
       body: "{}"
     }),
+  promoteZoneToCoordinator: (zoneId: string) =>
+    request<BridgeSnapshot>(`/api/zones/${encodeURIComponent(zoneId)}/promote`, {
+      method: "POST",
+      body: "{}"
+    }),
   transport: (groupId: string, action: TransportAction) =>
     request<NowPlaying>(`/api/groups/${encodeURIComponent(groupId)}/transport`, {
       method: "POST",
@@ -48,11 +53,35 @@ export const bridgeApi = {
       method: "POST",
       body: JSON.stringify({ index })
     }),
+  seek: (groupId: string, positionSeconds: number) =>
+    request<NowPlaying>(`/api/groups/${encodeURIComponent(groupId)}/seek`, {
+      method: "POST",
+      body: JSON.stringify({ positionSeconds })
+    }),
   volume: (zoneId: string, payload: VolumePayload) =>
     request<VolumeState>(`/api/zones/${encodeURIComponent(zoneId)}/volume`, {
       method: "POST",
       body: JSON.stringify(payload)
-    })
+    }),
+  devices: () => request<SonosDeviceInfo[]>("/api/devices"),
+  musicServices: () => request<MusicServiceDiscovery>("/api/music/services"),
+  listSources: () => request<SourceDescriptor[]>("/api/sources"),
+  browseSource: (sourceId: string, id?: string) => {
+    const query = id ? `?id=${encodeURIComponent(id)}` : "";
+    return request<SourceBrowseResponse>(`/api/sources/${encodeURIComponent(sourceId)}/browse${query}`);
+  },
+  searchSource: (sourceId: string, query: string) =>
+    request<SourceBrowseResponse>(`/api/sources/${encodeURIComponent(sourceId)}/search?q=${encodeURIComponent(query)}`),
+  playSourceItems: (sourceId: string, body: { trackIds: string[]; groupId: string; mode: PlaybackMode }) =>
+    request<NowPlaying>(`/api/sources/${encodeURIComponent(sourceId)}/play`, { method: "POST", body: JSON.stringify(body) }),
+  customServicePresets: () => request<CustomServicePresetView[]>("/api/music/custom-presets"),
+  registerCustomService: (body: { presetId: string; zoneId: string; hostOverride?: string; uriOverride?: string; secureUri?: string }) =>
+    request<RegisterCustomServiceResult>("/api/music/custom-presets/register", { method: "POST", body: JSON.stringify(body) }),
+  sonosAccounts: () => request<SonosAccountsResponse>("/api/music/accounts"),
+  musicBrowse: (body: { objectId: string; startingIndex?: number; requestedCount?: number; filter?: string; sortCriteria?: string }) =>
+    request<BrowseResult>("/api/music/browse", { method: "POST", body: JSON.stringify(body) }),
+  musicSearch: (body: { containerId: string; searchCriteria: string; startingIndex?: number; requestedCount?: number; filter?: string; sortCriteria?: string }) =>
+    request<BrowseResult>("/api/music/search", { method: "POST", body: JSON.stringify(body) })
 };
 
 export function subscribeBridgeEvents(onEvent: (event: BridgeEvent) => void, onError: () => void): () => void {

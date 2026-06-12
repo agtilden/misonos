@@ -2,14 +2,62 @@ import { firstDidlItem, parseDidlItems, type BridgeSnapshot, type NowPlaying, ty
 import { loadConfig, type BridgeConfig } from "./config.js";
 import { discoverSsdp } from "./ssdp.js";
 import { callSoap } from "./sonosSoap.js";
+import { fetchDeviceInfo } from "./deviceInfo.js";
+import type { PlaybackMode, SonosDeviceInfo, SourceBrowseResponse, SourceDescriptor, SourceTrackInfo } from "@misonos/sonos-protocol";
+import { browseSource, fetchTrack, listSources, searchSource } from "./sources.js";
+import {
+  buildServiceUri,
+  detectLanIp,
+  getPreset,
+  listPresets,
+  registerCustomService,
+  type CustomServicePresetView,
+  type RegisterCustomServiceResult
+} from "./customServices.js";
+import { discoverMusicServices, fetchSonosAccounts, type MusicServiceDiscovery, type SonosAccountsResponse } from "./musicServices.js";
 import { parseZoneGroupState, zoneFromDeviceDescription } from "./topology.js";
 
 export class SonosService {
   private zones = new Map<string, SonosZone>();
   private groups = new Map<string, SonosGroup>();
   private lastDiscovery = 0;
+  private rediscoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  private rediscoveryInProgress = false;
+  onSnapshot?: (snapshot: BridgeSnapshot) => void;
 
   constructor(private readonly config: BridgeConfig = loadConfig()) {}
+
+  private publicHost(): string | null {
+    return process.env.MISONOS_BRIDGE_PUBLIC_HOST ?? detectLanIp();
+  }
+
+  private scheduleRediscovery(reason: string): void {
+    if (this.rediscoveryTimer || this.rediscoveryInProgress) return;
+    console.warn(`[bridge] scheduling rediscovery (${reason})`);
+    this.rediscoveryTimer = setTimeout(async () => {
+      this.rediscoveryTimer = undefined;
+      this.rediscoveryInProgress = true;
+      try {
+        const snapshot = await this.discover();
+        this.onSnapshot?.(snapshot);
+      } catch (error) {
+        console.warn(`[bridge] rediscovery failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.rediscoveryInProgress = false;
+      }
+    }, 1500);
+  }
+
+  private async guardSoap<T>(zoneIdForLogging: string | undefined, action: () => Promise<T>): Promise<T> {
+    try {
+      return await action();
+    } catch (error) {
+      if (looksLikeConnectionFailure(error)) {
+        this.scheduleRediscovery(zoneIdForLogging ? `zone ${zoneIdForLogging} unreachable` : "soap call failed");
+      }
+      throw error;
+    }
+  }
 
   async snapshot(forceDiscovery = false): Promise<BridgeSnapshot> {
     if (forceDiscovery || this.zones.size === 0 || Date.now() - this.lastDiscovery > 30_000) {
@@ -56,39 +104,43 @@ export class SonosService {
   async nowPlaying(groupId: string): Promise<NowPlaying> {
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
-    const [position, transport] = await Promise.all([
-      callSoap(coordinator.ipAddress, "AVTransport", "GetPositionInfo", { InstanceID: 0 }),
-      callSoap(coordinator.ipAddress, "AVTransport", "GetTransportInfo", { InstanceID: 0 })
-    ]);
-    const baseUrl = `http://${coordinator.ipAddress}:1400`;
-    const item = firstDidlItem(position.TrackMetaData, baseUrl);
-    return {
-      groupId,
-      state: normalizePlaybackState(transport.CurrentTransportState),
-      title: item?.title ?? position.TrackURI ?? "Nothing playing",
-      artist: item?.artist,
-      album: item?.album,
-      albumArtUri: item?.albumArtUri ?? albumArtFromPosition(position, baseUrl),
-      duration: position.TrackDuration,
-      position: position.RelTime,
-      playlistPosition: numericPosition(position.Track),
-      uri: position.TrackURI,
-      updatedAt: new Date().toISOString()
-    };
+    return this.guardSoap(coordinator.uuid, async () => {
+      const [position, transport] = await Promise.all([
+        callSoap(coordinator.ipAddress, "AVTransport", "GetPositionInfo", { InstanceID: 0 }),
+        callSoap(coordinator.ipAddress, "AVTransport", "GetTransportInfo", { InstanceID: 0 })
+      ]);
+      const baseUrl = `http://${coordinator.ipAddress}:1400`;
+      const item = firstDidlItem(position.TrackMetaData, baseUrl);
+      return {
+        groupId,
+        state: normalizePlaybackState(transport.CurrentTransportState),
+        title: item?.title ?? position.TrackURI ?? "Nothing playing",
+        artist: item?.artist,
+        album: item?.album,
+        albumArtUri: item?.albumArtUri ?? albumArtFromPosition(position, baseUrl),
+        duration: position.TrackDuration,
+        position: position.RelTime,
+        playlistPosition: numericPosition(position.Track),
+        uri: position.TrackURI,
+        updatedAt: new Date().toISOString()
+      };
+    });
   }
 
   async queue(groupId: string): Promise<QueueItem[]> {
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
-    const response = await callSoap(coordinator.ipAddress, "ContentDirectory", "Browse", {
-      ObjectID: "Q:0",
-      BrowseFlag: "BrowseDirectChildren",
-      Filter: "*",
-      StartingIndex: 0,
-      RequestedCount: 100,
-      SortCriteria: ""
+    return this.guardSoap(coordinator.uuid, async () => {
+      const response = await callSoap(coordinator.ipAddress, "ContentDirectory", "Browse", {
+        ObjectID: "Q:0",
+        BrowseFlag: "BrowseDirectChildren",
+        Filter: "*",
+        StartingIndex: 0,
+        RequestedCount: 100,
+        SortCriteria: ""
+      });
+      return parseDidlItems(response.Result, `http://${coordinator.ipAddress}:1400`);
     });
-    return parseDidlItems(response.Result, `http://${coordinator.ipAddress}:1400`);
   }
 
   async transport(groupId: string, action: TransportAction): Promise<NowPlaying> {
@@ -106,6 +158,21 @@ export class SonosService {
     return this.nowPlayingSettled(groupId);
   }
 
+  async seekToPosition(groupId: string, positionSeconds: number): Promise<NowPlaying> {
+    const group = await this.requireGroup(groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    const hh = Math.floor(positionSeconds / 3600);
+    const mm = Math.floor((positionSeconds % 3600) / 60);
+    const ss = Math.floor(positionSeconds % 60);
+    const target = `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+    await callSoap(coordinator.ipAddress, "AVTransport", "Seek", {
+      InstanceID: 0,
+      Unit: "REL_TIME",
+      Target: target
+    });
+    return this.nowPlayingSettled(groupId);
+  }
+
   async playQueueIndex(groupId: string, index: number): Promise<NowPlaying> {
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
@@ -120,21 +187,23 @@ export class SonosService {
 
   async zoneVolume(zoneId: string): Promise<VolumeState> {
     const zone = await this.requireZone(zoneId);
-    const [volume, mute] = await Promise.all([
-      callSoap(zone.ipAddress, "RenderingControl", "GetVolume", {
-        InstanceID: 0,
-        Channel: "Master"
-      }),
-      callSoap(zone.ipAddress, "RenderingControl", "GetMute", {
-        InstanceID: 0,
-        Channel: "Master"
-      })
-    ]);
-    return {
-      id: zone.id,
-      volume: clampVolume(Number.parseInt(volume.CurrentVolume ?? "0", 10)),
-      muted: mute.CurrentMute === "1"
-    };
+    return this.guardSoap(zone.uuid, async () => {
+      const [volume, mute] = await Promise.all([
+        callSoap(zone.ipAddress, "RenderingControl", "GetVolume", {
+          InstanceID: 0,
+          Channel: "Master"
+        }),
+        callSoap(zone.ipAddress, "RenderingControl", "GetMute", {
+          InstanceID: 0,
+          Channel: "Master"
+        })
+      ]);
+      return {
+        id: zone.id,
+        volume: clampVolume(Number.parseInt(volume.CurrentVolume ?? "0", 10)),
+        muted: mute.CurrentMute === "1"
+      };
+    });
   }
 
   async setVolume(zoneId: string, payload: VolumePayload): Promise<VolumeState> {
@@ -168,15 +237,17 @@ export class SonosService {
   async groupVolume(groupId: string): Promise<VolumeState> {
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
-    const [volume, mute] = await Promise.all([
-      callSoap(coordinator.ipAddress, "GroupRenderingControl", "GetGroupVolume", { InstanceID: 0 }),
-      callSoap(coordinator.ipAddress, "GroupRenderingControl", "GetGroupMute", { InstanceID: 0 })
-    ]);
-    return {
-      id: group.id,
-      volume: clampVolume(Number.parseInt(volume.CurrentVolume ?? "0", 10)),
-      muted: mute.CurrentMute === "1"
-    };
+    return this.guardSoap(coordinator.uuid, async () => {
+      const [volume, mute] = await Promise.all([
+        callSoap(coordinator.ipAddress, "GroupRenderingControl", "GetGroupVolume", { InstanceID: 0 }),
+        callSoap(coordinator.ipAddress, "GroupRenderingControl", "GetGroupMute", { InstanceID: 0 })
+      ]);
+      return {
+        id: group.id,
+        volume: clampVolume(Number.parseInt(volume.CurrentVolume ?? "0", 10)),
+        muted: mute.CurrentMute === "1"
+      };
+    });
   }
 
   async setGroupVolume(groupId: string, payload: VolumePayload): Promise<VolumeState> {
@@ -222,6 +293,21 @@ export class SonosService {
     return this.discover();
   }
 
+  async promoteZoneToCoordinator(zoneId: string): Promise<BridgeSnapshot> {
+    const zone = await this.requireZone(zoneId);
+    if (!zone.groupId) throw new Error("Zone is not in a group");
+    const group = await this.requireGroup(zone.groupId);
+    if (group.coordinatorId === zone.uuid) return this.snapshot();
+    const coordinator = await this.requireZone(group.coordinatorId);
+    await callSoap(coordinator.ipAddress, "AVTransport", "DelegateGroupCoordinationTo", {
+      InstanceID: 0,
+      NewCoordinator: zone.uuid,
+      RejoinGroup: 1
+    });
+    await sleep(1200);
+    return this.discover();
+  }
+
   async makeZoneStandalone(zoneId: string): Promise<BridgeSnapshot> {
     const zone = await this.requireZone(zoneId);
     await callSoap(zone.ipAddress, "AVTransport", "BecomeCoordinatorOfStandaloneGroup", {
@@ -229,6 +315,175 @@ export class SonosService {
     });
     await sleep(1200);
     return this.discover();
+  }
+
+  async listMusicServices(): Promise<MusicServiceDiscovery> {
+    const seed = [...this.zones.values()].find((zone) => zone.visible);
+    if (!seed) throw new Error("No reachable Sonos zone");
+    return discoverMusicServices(seed);
+  }
+
+  async listSonosAccounts(): Promise<SonosAccountsResponse> {
+    const seed = [...this.zones.values()].find((zone) => zone.visible);
+    if (!seed) throw new Error("No reachable Sonos zone");
+    return fetchSonosAccounts(seed);
+  }
+
+  async deviceInfo(zoneId: string): Promise<SonosDeviceInfo> {
+    const zone = await this.requireZone(zoneId);
+    return fetchDeviceInfo(zone);
+  }
+
+  listSources(): Promise<SourceDescriptor[]> {
+    return listSources();
+  }
+
+  browseSource(sourceId: string, id?: string): Promise<SourceBrowseResponse> {
+    return browseSource(sourceId, id);
+  }
+
+  searchSource(sourceId: string, query: string): Promise<SourceBrowseResponse> {
+    return searchSource(sourceId, query);
+  }
+
+  fetchSourceTrack(sourceId: string, id: string): Promise<SourceTrackInfo> {
+    return fetchTrack(sourceId, id);
+  }
+
+  async playSourceItems(options: { sourceId: string; trackIds: string[]; groupId: string; mode: PlaybackMode }): Promise<NowPlaying> {
+    if (options.trackIds.length === 0) throw new Error("trackIds must be non-empty");
+    const group = await this.requireGroup(options.groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    const tracks = await Promise.all(options.trackIds.map((trackId) => fetchTrack(options.sourceId, trackId)));
+    const bridgeHost = this.publicHost();
+    if (!bridgeHost) throw new Error("Could not determine bridge LAN IP for stream proxy");
+    const queueItems = tracks.map((track, index) => {
+      const ext = extensionForMime(track.mimeType);
+      const titleSlug = urlSafeSlug(track.title);
+      const proxyUrl = `http://${bridgeHost}:${this.config.port}/api/stream/${encodeURIComponent(options.sourceId)}/${encodeURIComponent(options.trackIds[index])}/${titleSlug}${ext}`;
+      const proxiedTrack: SourceTrackInfo = { ...track, url: proxyUrl };
+      return { uri: proxyUrl, metadata: buildDidl(proxiedTrack) };
+    });
+
+    if (options.mode === "replace") {
+      await callSoap(coordinator.ipAddress, "AVTransport", "RemoveAllTracksFromQueue", { InstanceID: 0 });
+      for (const item of queueItems) {
+        await callSoap(coordinator.ipAddress, "AVTransport", "AddURIToQueue", {
+          InstanceID: 0,
+          EnqueuedURI: item.uri,
+          EnqueuedURIMetaData: item.metadata,
+          DesiredFirstTrackNumberEnqueued: 0,
+          EnqueueAsNext: 0
+        });
+      }
+      await callSoap(coordinator.ipAddress, "AVTransport", "SetAVTransportURI", {
+        InstanceID: 0,
+        CurrentURI: `x-rincon-queue:${coordinator.uuid}#0`,
+        CurrentURIMetaData: ""
+      });
+      await callSoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: "1" });
+      await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
+    } else if (options.mode === "next") {
+      // Add in reverse so the first selected track lands immediately after the current track
+      for (const item of [...queueItems].reverse()) {
+        await callSoap(coordinator.ipAddress, "AVTransport", "AddURIToQueue", {
+          InstanceID: 0,
+          EnqueuedURI: item.uri,
+          EnqueuedURIMetaData: item.metadata,
+          DesiredFirstTrackNumberEnqueued: 0,
+          EnqueueAsNext: 1
+        });
+      }
+    } else {
+      for (const item of queueItems) {
+        await callSoap(coordinator.ipAddress, "AVTransport", "AddURIToQueue", {
+          InstanceID: 0,
+          EnqueuedURI: item.uri,
+          EnqueuedURIMetaData: item.metadata,
+          DesiredFirstTrackNumberEnqueued: 0,
+          EnqueueAsNext: 0
+        });
+      }
+    }
+
+    return this.nowPlaying(options.groupId);
+  }
+
+  listCustomServicePresets(): CustomServicePresetView[] {
+    return listPresets();
+  }
+
+  async registerCustomServiceOnZone(options: {
+    presetId: string;
+    zoneId: string;
+    hostOverride?: string;
+    uriOverride?: string;
+    secureUri?: string;
+  }): Promise<RegisterCustomServiceResult> {
+    const preset = getPreset(options.presetId);
+    if (!preset) throw new Error(`Unknown preset: ${options.presetId}`);
+    const zone = await this.requireZone(options.zoneId);
+    const host = options.hostOverride ?? detectLanIp();
+    if (!options.uriOverride && !host) throw new Error("Could not detect LAN IP; provide uri override");
+    const uri = options.uriOverride ?? buildServiceUri(preset, host as string);
+    return registerCustomService({ speakerIp: zone.ipAddress, preset, uri, secureUri: options.secureUri });
+  }
+
+  async listDevices(): Promise<SonosDeviceInfo[]> {
+    const visible = [...this.zones.values()].filter((zone) => zone.visible);
+    const results = await Promise.all(visible.map((zone) => fetchDeviceInfo(zone)));
+    return results.sort((a, b) => a.zoneName.localeCompare(b.zoneName));
+  }
+
+  async browseContainer(options: {
+    objectId: string;
+    startingIndex?: number;
+    requestedCount?: number;
+    filter?: string;
+    sortCriteria?: string;
+  }): Promise<{ raw: string; items: QueueItem[]; numberReturned?: string; totalMatches?: string }> {
+    const seed = [...this.zones.values()].find((zone) => zone.visible);
+    if (!seed) throw new Error("No reachable Sonos zone");
+    const response = await callSoap(seed.ipAddress, "ContentDirectory", "Browse", {
+      ObjectID: options.objectId,
+      BrowseFlag: "BrowseDirectChildren",
+      Filter: options.filter ?? "*",
+      StartingIndex: options.startingIndex ?? 0,
+      RequestedCount: options.requestedCount ?? 25,
+      SortCriteria: options.sortCriteria ?? ""
+    });
+    return {
+      raw: response.Result ?? "",
+      items: parseDidlItems(response.Result, `http://${seed.ipAddress}:1400`),
+      numberReturned: response.NumberReturned,
+      totalMatches: response.TotalMatches
+    };
+  }
+
+  async searchContainer(options: {
+    containerId: string;
+    searchCriteria: string;
+    startingIndex?: number;
+    requestedCount?: number;
+    filter?: string;
+    sortCriteria?: string;
+  }): Promise<{ raw: string; items: QueueItem[]; numberReturned?: string; totalMatches?: string }> {
+    const seed = [...this.zones.values()].find((zone) => zone.visible);
+    if (!seed) throw new Error("No reachable Sonos zone");
+    const response = await callSoap(seed.ipAddress, "ContentDirectory", "Search", {
+      ContainerID: options.containerId,
+      SearchCriteria: options.searchCriteria,
+      Filter: options.filter ?? "*",
+      StartingIndex: options.startingIndex ?? 0,
+      RequestedCount: options.requestedCount ?? 25,
+      SortCriteria: options.sortCriteria ?? ""
+    });
+    return {
+      raw: response.Result ?? "",
+      items: parseDidlItems(response.Result, `http://${seed.ipAddress}:1400`),
+      numberReturned: response.NumberReturned,
+      totalMatches: response.TotalMatches
+    };
   }
 
   private async refreshTopology(seed?: SonosZone): Promise<void> {
@@ -304,4 +559,95 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+const CONNECTION_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "ENOTFOUND"
+]);
+
+function looksLikeConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError" || error.name === "TimeoutError") return true;
+  const message = error.message.toLowerCase();
+  if (message.includes("aborted") || message.includes("timeout") || message.includes("network")) return true;
+  for (const code of CONNECTION_ERROR_CODES) if (message.includes(code.toLowerCase())) return true;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause && typeof cause === "object" && cause !== null) {
+    const code = (cause as { code?: string }).code;
+    if (typeof code === "string" && CONNECTION_ERROR_CODES.has(code)) return true;
+    const causeMessage = (cause as { message?: string }).message;
+    if (typeof causeMessage === "string") {
+      const lower = causeMessage.toLowerCase();
+      if (lower.includes("timeout") || lower.includes("aborted")) return true;
+    }
+  }
+  return false;
+}
+
+function buildDidl(track: SourceTrackInfo): string {
+  const mime = track.mimeType ?? "audio/mpeg";
+  // Sonos drops user-supplied metadata (falling back to URL basename) when the
+  // protocolInfo doesn't carry DLNA streaming flags for non-MP3 mimes. Force
+  // streaming + byte-seek hints regardless of mime so the title we pass sticks.
+  const protocolInfo = `http-get:*:${escapeXml(mime)}:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000`;
+  const inner =
+    `<item id="${escapeXml(track.id)}" parentID="-1" restricted="true">` +
+    `<dc:title>${escapeXml(track.title)}</dc:title>` +
+    (track.artist ? `<dc:creator>${escapeXml(track.artist)}</dc:creator>` : "") +
+    (track.album ? `<upnp:album>${escapeXml(track.album)}</upnp:album>` : "") +
+    `<res protocolInfo="${protocolInfo}">${escapeXml(track.url)}</res>` +
+    `<upnp:class>object.item.audioItem.musicTrack</upnp:class>` +
+    `</item>`;
+  return `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">${inner}</DIDL-Lite>`;
+}
+
+function urlSafeSlug(value: string): string {
+  // Sonos uses the URL basename as a fallback "title" when it can't read
+  // embedded file metadata. Make that basename actually look like the song.
+  const cleaned = value
+    .replace(/[\\/?#]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+  return encodeURIComponent(cleaned || "track");
+}
+
+function extensionForMime(mime: string | undefined): string {
+  if (!mime) return ".mp3";
+  // Mime can include codec specifiers like `audio/mp4; codecs="mp4a.40.2"`.
+  const baseMime = mime.split(";")[0].trim().toLowerCase();
+  switch (baseMime) {
+    case "audio/mp4":
+    case "audio/x-m4a":
+      return ".m4a";
+    case "audio/aac":
+      return ".aac";
+    case "audio/webm":
+    case "audio/opus":
+      return ".webm";
+    case "audio/ogg":
+      return ".ogg";
+    case "audio/flac":
+    case "audio/x-flac":
+      return ".flac";
+    case "audio/mpeg":
+      return ".mp3";
+    default:
+      return ".mp3";
+  }
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }

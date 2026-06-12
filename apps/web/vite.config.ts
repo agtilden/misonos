@@ -6,7 +6,11 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://127.0.0.1:4317"
-    }
+    },
+    allowedHosts: [".ts.net", "localhost", "127.0.0.1"]
+  },
+  preview: {
+    allowedHosts: [".ts.net", "localhost", "127.0.0.1"]
   },
   test: {
     environment: "jsdom",

@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 
 const commands = [
   ["npm", ["run", "dev", "-w", "@misonos/bridge"]],
+  ["npm", ["run", "dev", "-w", "@misonos/grateful-smapi"]],
+  ["npm", ["run", "dev", "-w", "@misonos/phish-smapi"]],
+  ["npm", ["run", "dev", "-w", "@misonos/ytmusic-smapi"]],
   ["npm", ["run", "dev", "-w", "@misonos/web"]]
 ];
 

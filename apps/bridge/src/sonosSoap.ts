@@ -6,7 +6,8 @@ export type ServiceType =
   | "GroupRenderingControl"
   | "ContentDirectory"
   | "DeviceProperties"
-  | "ZoneGroupTopology";
+  | "ZoneGroupTopology"
+  | "MusicServices";
 
 export class SonosSoapError extends Error {
   constructor(
@@ -73,6 +74,8 @@ export function controlUrlForService(serviceType: ServiceType): string {
       return "/DeviceProperties/Control";
     case "ZoneGroupTopology":
       return "/ZoneGroupTopology/Control";
+    case "MusicServices":
+      return "/MusicServices/Control";
   }
 }
 
@@ -90,6 +93,8 @@ export function eventUrlForService(serviceType: ServiceType): string {
       return "/DeviceProperties/Event";
     case "ZoneGroupTopology":
       return "/ZoneGroupTopology/Event";
+    case "MusicServices":
+      return "/MusicServices/Event";
   }
 }
 

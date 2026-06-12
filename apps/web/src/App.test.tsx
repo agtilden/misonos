@@ -21,6 +21,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url.endsWith("/api/groups")) return json([{ id: "g1", coordinatorId: "z1", coordinatorName: "Kitchen", zones: [] }]);
       if (url.endsWith("/api/zones")) return json([{ id: "z1", uuid: "z1", name: "Kitchen", ipAddress: "10.0.0.2", location: "", visible: true }]);
+      if (url.endsWith("/api/sources")) return json([]);
       if (url.endsWith("/now-playing")) return json({ groupId: "g1", state: "PLAYING", title: "Song", position: "0:01:07", duration: "0:04:04", updatedAt: new Date().toISOString() });
       if (url.endsWith("/queue")) return json([{ id: "q1", title: "Song" }]);
       return json({ groups: [{ id: "g1", coordinatorId: "z1", coordinatorName: "Kitchen", zones: [] }], zones: [] });
@@ -33,10 +34,10 @@ describe("App", () => {
 
   it("renders the controller shell", async () => {
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "LAN Controller" })).toBeInTheDocument();
-    expect(await screen.findByText("Kitchen")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
+    expect(await screen.findByText(/^(Mint|Amber|Sky|Coral|Lilac|Lime|Pink|Olive)$/)).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Song" })).toBeInTheDocument();
-    expect(await screen.findByRole("meter", { name: "Playback progress" })).toBeInTheDocument();
+    expect(await screen.findByRole("meter", { name: "Playback progress (click to seek)" })).toBeInTheDocument();
   });
 });
 

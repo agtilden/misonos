@@ -4,6 +4,7 @@ import type { BridgeEvent, TransportAction, VolumePayload } from "@misonos/sonos
 import type { BridgeConfig } from "./config.js";
 import { SonosEventManager } from "./sonosEvents.js";
 import { SonosService } from "./sonosService.js";
+import { proxyStream } from "./streamProxy.js";
 
 type RouteHandler = (
   request: IncomingMessage,
@@ -20,6 +21,11 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       client.write(`event: ${event.type}\n`);
       client.write(`data: ${JSON.stringify(event)}\n\n`);
     }
+  };
+
+  service.onSnapshot = (snapshot) => {
+    void ensureSonosSubscriptions(snapshot);
+    sendEvent({ type: "snapshot", payload: snapshot, at: new Date().toISOString() });
   };
 
   setInterval(async () => {
@@ -99,6 +105,15 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       return json(response, nowPlaying);
     }
 
+    const seekMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/seek$/);
+    if (request.method === "POST" && seekMatch) {
+      const body = await readJson<{ positionSeconds: number }>(request);
+      if (typeof body.positionSeconds !== "number" || body.positionSeconds < 0) return json(response, { error: "Invalid position" }, 400);
+      const nowPlaying = await service.seekToPosition(decodeURIComponent(seekMatch[1]), body.positionSeconds);
+      sendEvent({ type: "now-playing", payload: nowPlaying, at: new Date().toISOString() });
+      return json(response, nowPlaying);
+    }
+
     const groupVolumeMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/volume$/);
     if (groupVolumeMatch) {
       const groupId = decodeURIComponent(groupVolumeMatch[1]);
@@ -111,6 +126,14 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       const body = await readJson<{ groupId: string }>(request);
       if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
       const snapshot = await service.joinZoneToGroup(decodeURIComponent(joinZoneMatch[1]), body.groupId);
+      await ensureSonosSubscriptions(snapshot);
+      sendEvent({ type: "snapshot", payload: snapshot, at: new Date().toISOString() });
+      return json(response, snapshot);
+    }
+
+    const promoteZoneMatch = url.pathname.match(/^\/api\/zones\/([^/]+)\/promote$/);
+    if (request.method === "POST" && promoteZoneMatch) {
+      const snapshot = await service.promoteZoneToCoordinator(decodeURIComponent(promoteZoneMatch[1]));
       await ensureSonosSubscriptions(snapshot);
       sendEvent({ type: "snapshot", payload: snapshot, at: new Date().toISOString() });
       return json(response, snapshot);
@@ -129,6 +152,86 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       const zoneId = decodeURIComponent(volumeMatch[1]);
       if (request.method === "GET") return json(response, await service.zoneVolume(zoneId));
       if (request.method === "POST") return json(response, await service.setVolume(zoneId, await readJson<VolumePayload>(request)));
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/devices") {
+      return json(response, await service.listDevices());
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/sources") {
+      return json(response, await service.listSources());
+    }
+
+    const streamMatch = url.pathname.match(/^\/api\/stream\/([^/]+)\/([^/]+?)(?:\.[A-Za-z0-9]{2,5})?(?:\/[^/]+)?$/);
+    if (streamMatch && (request.method === "GET" || request.method === "HEAD")) {
+      const sourceId = decodeURIComponent(streamMatch[1]);
+      const trackId = decodeURIComponent(streamMatch[2]);
+      await proxyStream(sourceId, trackId, request, response);
+      return;
+    }
+
+    const sourceBrowseMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/browse$/);
+    if (request.method === "GET" && sourceBrowseMatch) {
+      const sourceId = decodeURIComponent(sourceBrowseMatch[1]);
+      const id = url.searchParams.get("id") ?? undefined;
+      return json(response, await service.browseSource(sourceId, id));
+    }
+
+    const sourceSearchMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/search$/);
+    if (request.method === "GET" && sourceSearchMatch) {
+      const sourceId = decodeURIComponent(sourceSearchMatch[1]);
+      const query = url.searchParams.get("q") ?? "";
+      if (!query) return json(response, { error: "Missing q" }, 400);
+      return json(response, await service.searchSource(sourceId, query));
+    }
+
+    const sourceTrackMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/track$/);
+    if (request.method === "GET" && sourceTrackMatch) {
+      const sourceId = decodeURIComponent(sourceTrackMatch[1]);
+      const id = url.searchParams.get("id");
+      if (!id) return json(response, { error: "Missing id" }, 400);
+      return json(response, await service.fetchSourceTrack(sourceId, id));
+    }
+
+    const sourcePlayMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/play$/);
+    if (request.method === "POST" && sourcePlayMatch) {
+      const sourceId = decodeURIComponent(sourcePlayMatch[1]);
+      const body = await readJson<{ trackIds: string[]; groupId: string; mode?: "replace" | "next" | "end" }>(request);
+      if (!Array.isArray(body.trackIds) || body.trackIds.length === 0) return json(response, { error: "trackIds[] is required" }, 400);
+      if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
+      const mode = body.mode ?? "replace";
+      const nowPlaying = await service.playSourceItems({ sourceId, trackIds: body.trackIds, groupId: body.groupId, mode });
+      return json(response, nowPlaying);
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/music/services") {
+      return json(response, await service.listMusicServices());
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/music/custom-presets") {
+      return json(response, service.listCustomServicePresets());
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/music/custom-presets/register") {
+      const body = await readJson<{ presetId: string; zoneId: string; hostOverride?: string; uriOverride?: string; secureUri?: string }>(request);
+      if (!body.presetId || !body.zoneId) return json(response, { error: "Missing presetId or zoneId" }, 400);
+      return json(response, await service.registerCustomServiceOnZone(body));
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/music/accounts") {
+      return json(response, await service.listSonosAccounts());
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/music/browse") {
+      const body = await readJson<{ objectId: string; startingIndex?: number; requestedCount?: number; filter?: string; sortCriteria?: string }>(request);
+      if (!body.objectId) return json(response, { error: "Missing objectId" }, 400);
+      return json(response, await service.browseContainer(body));
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/music/search") {
+      const body = await readJson<{ containerId: string; searchCriteria: string; startingIndex?: number; requestedCount?: number; filter?: string; sortCriteria?: string }>(request);
+      if (!body.containerId || !body.searchCriteria) return json(response, { error: "Missing containerId or searchCriteria" }, 400);
+      return json(response, await service.searchContainer(body));
     }
 
     return json(response, { error: "Not found" }, 404);

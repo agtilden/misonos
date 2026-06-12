@@ -68,6 +68,138 @@ export interface BridgeSnapshot {
   groups: SonosGroup[];
 }
 
+export interface MusicServiceDescriptor {
+  id: number;
+  name: string;
+  version?: string;
+  uri?: string;
+  secureUri?: string;
+  containerType?: string;
+  capabilities?: string;
+  authType?: string;
+  pollInterval?: string;
+  manifestUri?: string;
+}
+
+export interface MusicServiceDiscovery {
+  services: MusicServiceDescriptor[];
+  youtubeMusic?: MusicServiceDescriptor;
+  session?: {
+    serviceId: number;
+    sessionId?: string;
+    username?: string;
+    error?: string;
+  };
+  fetchedAt: string;
+}
+
+export interface SonosAccount {
+  type: number;
+  serialNum?: string;
+  username?: string;
+  metadata?: string;
+  nickname?: string;
+  oaDeviceId?: string;
+  key?: string;
+}
+
+export interface SonosAccountsResponse {
+  accounts: SonosAccount[];
+  raw: string;
+  fetchedAt: string;
+}
+
+export interface BrowseResult {
+  raw: string;
+  items: QueueItem[];
+  numberReturned?: string;
+  totalMatches?: string;
+}
+
+export interface CustomServicePresetView {
+  id: string;
+  name: string;
+  description: string;
+  port: number;
+  path?: string;
+  authType: "Anonymous" | "UserId" | "DeviceLink" | "AppLink";
+  pollInterval: number;
+  containerType: string;
+  capabilities?: string;
+  presentationMapUri?: string;
+  stringsUri?: string;
+  uri: string | null;
+  detectedHostIp: string | null;
+}
+
+export interface RegisterCustomServiceResult {
+  status: number;
+  body: string;
+  attemptedUri: string;
+  speakerIp: string;
+}
+
+export interface SourceDescriptor {
+  id: string;
+  name: string;
+  description?: string;
+  rootId: string;
+  baseUrl?: string;
+  capabilities?: string[];
+}
+
+export type SourceItemKind = "container" | "album" | "playable";
+
+export interface SourceBrowseItem {
+  id: string;
+  title: string;
+  kind: SourceItemKind;
+  subtitle?: string;
+  artist?: string;
+  album?: string;
+  durationSeconds?: number;
+}
+
+export type PlaybackMode = "replace" | "next" | "end";
+
+export interface SourceBrowseResponse {
+  id: string;
+  items: SourceBrowseItem[];
+  total: number;
+  title?: string;
+}
+
+export interface SourceTrackInfo {
+  id: string;
+  title: string;
+  artist?: string;
+  album?: string;
+  durationSeconds?: number;
+  url: string;
+  mimeType?: string;
+}
+
+export interface SonosDeviceInfo {
+  uuid: string;
+  zoneName: string;
+  roomName: string;
+  modelName?: string;
+  displayName?: string;
+  modelNumber?: string;
+  serialNumber?: string;
+  softwareVersion?: string;
+  softwareDate?: string;
+  swGen?: string;
+  minCompatibleVersion?: string;
+  hardwareVersion?: string;
+  dspVersion?: string;
+  ipAddress: string;
+  macAddress?: string;
+  extraInfo?: string;
+  householdId?: string;
+  fetchedAt: string;
+}
+
 export type BridgeEvent =
   | { type: "snapshot"; payload: BridgeSnapshot; at: string }
   | { type: "now-playing"; payload: NowPlaying; at: string }

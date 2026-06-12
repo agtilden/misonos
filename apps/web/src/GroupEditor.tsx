@@ -1,7 +1,22 @@
-import * as go from "gojs";
-import { Maximize2, Minimize2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Background,
+  ReactFlow,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesInitialized,
+  useNodesState,
+  useReactFlow,
+  type Node,
+  type NodeChange,
+  type NodeMouseHandler,
+  type NodeProps,
+  type NodeTypes,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { ArrowLeft } from "lucide-react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { SonosGroup } from "@misonos/sonos-protocol";
+import { paletteForMembers } from "./groupPalette.js";
 
 interface GroupEditorProps {
   groups: SonosGroup[];
@@ -10,331 +25,621 @@ interface GroupEditorProps {
   onSelectGroup: (groupId: string) => void;
   onJoinZoneGroup: (zoneId: string, groupId: string) => void;
   onUngroupZone: (zoneId: string) => void;
+  onPromoteZone: (zoneId: string) => void;
+  onClose?: () => void;
 }
 
-interface GroupNodeData {
-  key: string;
-  isGroup: true;
+type GroupNodeData = {
+  kind: "group";
   groupId: string;
   label: string;
   color: string;
-  stroke: string;
-  loc: string;
-}
+  selected: boolean;
+};
 
-interface ZoneNodeData {
-  key: string;
+type ZoneNodeData = {
+  kind: "zone";
   zoneId: string;
-  group: string;
   groupId?: string;
   label: string;
-  shortLabel: string;
   color: string;
-  stroke: string;
   coordinator: boolean;
+};
+
+type EditorNode = Node<GroupNodeData | ZoneNodeData>;
+
+const CANVAS_PADDING_X = 12;
+const CANVAS_TOP_RESERVED = 40;
+const CANVAS_BOTTOM_RESERVED = 60;
+const GROUP_GAP = 16;
+const GROUP_LABEL_HEIGHT = 28;
+const GROUP_INNER_PADDING = 22;
+const ZONE_GAP = 10;
+const ZONE_MIN_WIDTH = 64;
+const ZONE_MIN_HEIGHT = 36;
+const ZONE_MAX_WIDTH = 260;
+const ZONE_MAX_HEIGHT = 120;
+const FALLBACK_CANVAS_WIDTH = 800;
+const FALLBACK_CANVAS_HEIGHT = 360;
+
+interface Rect { x: number; y: number; w: number; h: number }
+
+function sliceAndDice(weights: number[], rect: Rect, gap: number): Rect[] {
+  const result: Rect[] = new Array(weights.length);
+  const recurse = (indices: number[], region: Rect): void => {
+    if (indices.length === 0) return;
+    if (indices.length === 1) {
+      result[indices[0]] = region;
+      return;
+    }
+    const total = indices.reduce((acc, i) => acc + weights[i], 0);
+    let split = 1;
+    let acc = weights[indices[0]];
+    for (let k = 1; k < indices.length; k++) {
+      if (acc >= total / 2) break;
+      acc += weights[indices[k]];
+      split = k + 1;
+    }
+    if (split >= indices.length) split = indices.length - 1;
+    const leftIdx = indices.slice(0, split);
+    const rightIdx = indices.slice(split);
+    const leftWeight = leftIdx.reduce((sum, i) => sum + weights[i], 0);
+    const ratio = leftWeight / total;
+    if (region.w >= region.h) {
+      const availableW = Math.max(0, region.w - gap);
+      const lw = availableW * ratio;
+      recurse(leftIdx, { x: region.x, y: region.y, w: lw, h: region.h });
+      recurse(rightIdx, { x: region.x + lw + gap, y: region.y, w: availableW - lw, h: region.h });
+    } else {
+      const availableH = Math.max(0, region.h - gap);
+      const lh = availableH * ratio;
+      recurse(leftIdx, { x: region.x, y: region.y, w: region.w, h: lh });
+      recurse(rightIdx, { x: region.x, y: region.y + lh + gap, w: region.w, h: availableH - lh });
+    }
+  };
+  recurse(weights.map((_, i) => i), rect);
+  return result;
 }
 
-const palette = [
-  "#91d3c4",
-  "#f1b555",
-  "#8fb8ff",
-  "#ff8a80",
-  "#c2a5ff",
-  "#84d982",
-  "#f08ec4",
-  "#a8c66c"
-];
-
-export function GroupEditor({ groups, selectedGroupId, busy = false, onSelectGroup, onJoinZoneGroup, onUngroupZone }: GroupEditorProps) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const diagramRef = useRef<go.Diagram | null>(null);
-  const modelKeyRef = useRef("");
-  const callbacksRef = useRef({ onSelectGroup, onJoinZoneGroup, onUngroupZone });
-  const [maximized, setMaximized] = useState(false);
-
-  callbacksRef.current = { onSelectGroup, onJoinZoneGroup, onUngroupZone };
-
-  const modelData = useMemo(() => buildModelData(groups, selectedGroupId), [groups, selectedGroupId]);
-
-  useEffect(() => {
-    if (!hostRef.current || diagramRef.current) return;
-    if (isJsdom()) return;
-    const $ = go.GraphObject.make;
-    const diagram = $(go.Diagram, hostRef.current, {
-      "undoManager.isEnabled": false,
-      "animationManager.isEnabled": true,
-      allowCopy: false,
-      allowDelete: false,
-      allowLink: false,
-      "toolManager.dragSelectingTool.isEnabled": true,
-      "toolManager.dragSelectingTool.isPartialInclusion": true,
-      padding: 24,
-      layout: $(go.GridLayout, {
-        wrappingColumn: 3,
-        spacing: new go.Size(34, 30),
-        comparer: (left, right) => String(left.data.label).localeCompare(String(right.data.label))
-      }),
-      "SelectionMoved": (event) => {
-        const diagram = event.diagram;
-        const movedZones = selectedZoneNodes(diagram);
-        if (movedZones.length === 0) return;
-        const sourceGroupSizes = groupSizesById(diagram);
-        const nearest = nearestGroupForNodes(diagram, movedZones);
-        if (nearest?.groupId && !isOptimisticGroupId(nearest.groupId)) {
-          for (const node of movedZones) {
-            const zone = node.data as ZoneNodeData;
-            if (nearest.groupId === zone.groupId) continue;
-            diagram.model.setDataProperty(zone, "group", groupKey(nearest.groupId));
-            diagram.model.setDataProperty(zone, "groupId", nearest.groupId);
-            callbacksRef.current.onJoinZoneGroup(zone.zoneId, nearest.groupId);
-          }
-          return;
-        }
-        for (const node of movedZones) {
-          const zone = node.data as ZoneNodeData;
-          if (!zone.groupId || isOptimisticGroupId(zone.groupId)) continue;
-          if ((sourceGroupSizes.get(zone.groupId) ?? 0) <= 1) continue;
-          diagram.model.setDataProperty(zone, "group", undefined);
-          diagram.model.setDataProperty(zone, "groupId", undefined);
-          callbacksRef.current.onUngroupZone(zone.zoneId);
-        }
-      }
+function fitZonesInGroup(count: number, group: Rect): { zones: Rect[]; cols: number } {
+  if (count === 0) return { zones: [], cols: 0 };
+  const innerW = Math.max(0, group.w - GROUP_INNER_PADDING * 2);
+  const innerH = Math.max(0, group.h - GROUP_LABEL_HEIGHT - GROUP_INNER_PADDING);
+  let bestCols = 1;
+  let bestArea = -1;
+  for (let cols = 1; cols <= count; cols++) {
+    const rows = Math.ceil(count / cols);
+    const zoneW = (innerW - (cols - 1) * ZONE_GAP) / cols;
+    const zoneH = (innerH - (rows - 1) * ZONE_GAP) / rows;
+    if (zoneW <= 0 || zoneH <= 0) continue;
+    const clampedW = Math.min(ZONE_MAX_WIDTH, zoneW);
+    const clampedH = Math.min(ZONE_MAX_HEIGHT, zoneH);
+    const area = clampedW * clampedH * count;
+    const meetsMin = clampedW >= ZONE_MIN_WIDTH && clampedH >= ZONE_MIN_HEIGHT;
+    const score = meetsMin ? area * 100 : area;
+    if (score > bestArea) {
+      bestArea = score;
+      bestCols = cols;
+    }
+  }
+  const cols = bestCols;
+  const rows = Math.ceil(count / cols);
+  const zoneW = Math.min(ZONE_MAX_WIDTH, Math.max(ZONE_MIN_WIDTH * 0.5, (innerW - (cols - 1) * ZONE_GAP) / cols));
+  const zoneH = Math.min(ZONE_MAX_HEIGHT, Math.max(ZONE_MIN_HEIGHT * 0.5, (innerH - (rows - 1) * ZONE_GAP) / rows));
+  const totalW = cols * zoneW + (cols - 1) * ZONE_GAP;
+  const totalH = rows * zoneH + (rows - 1) * ZONE_GAP;
+  const offsetX = GROUP_INNER_PADDING + Math.max(0, (innerW - totalW) / 2);
+  const offsetY = GROUP_LABEL_HEIGHT + Math.max(0, (innerH - totalH) / 2);
+  const zones: Rect[] = [];
+  for (let i = 0; i < count; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    zones.push({
+      x: offsetX + col * (zoneW + ZONE_GAP),
+      y: offsetY + row * (zoneH + ZONE_GAP),
+      w: zoneW,
+      h: zoneH
     });
+  }
+  return { zones, cols };
+}
 
-    diagram.groupTemplate = $(
-      go.Group,
-      "Auto",
-      {
-        movable: false,
-        selectable: true,
-        selectionAdorned: false,
-        computesBoundsAfterDrag: true,
-        click: (_event, group) => {
-          const groupId = (group.part?.data as GroupNodeData | undefined)?.groupId;
-          if (groupId) callbacksRef.current.onSelectGroup(groupId);
-        }
-      },
-      $(
-        go.Shape,
-        "Circle",
-        {
-          minSize: new go.Size(174, 174),
-          strokeWidth: 4,
-          opacity: 0.2
-        },
-        new go.Binding("fill", "color"),
-        new go.Binding("stroke", "stroke")
-      ),
-      $(
-        go.Panel,
-        "Vertical",
-        { margin: 18 },
-        $(
-          go.TextBlock,
-          {
-            margin: new go.Margin(0, 0, 10, 0),
-            stroke: "#f2f0e8",
-            font: "700 14px Inter, sans-serif"
-          },
-          new go.Binding("text", "label")
-        ),
-        $(go.Placeholder, { padding: 20 })
-      )
-    );
+function membershipKey(zones: { uuid: string }[]): string {
+  return zones.map((zone) => zone.uuid).sort().join("|");
+}
 
-    diagram.nodeTemplate = $(
-      go.Node,
-      "Spot",
-      {
-        movable: true,
-        cursor: "grab",
-        selectionAdorned: false,
-        mouseDragEnter: (_event, node) => {
-          node.cursor = "grabbing";
-        },
-        mouseDragLeave: (_event, node) => {
-          node.cursor = "grab";
-        },
-        click: (_event, node) => {
-          const groupId = (node.part?.data as ZoneNodeData | undefined)?.groupId;
-          if (groupId) callbacksRef.current.onSelectGroup(groupId);
-        }
-      },
-      $(
-        go.Panel,
-        "Auto",
-        $(
-          go.Shape,
-          "Circle",
-          {
-            width: 72,
-            height: 72,
-            strokeWidth: 3,
-            fill: "#222827"
-          },
-          new go.Binding("stroke", "stroke")
-        ),
-        $(
-          go.TextBlock,
-          {
-            stroke: "#f2f0e8",
-            font: "800 20px Inter, sans-serif",
-            textAlign: "center"
-          },
-          new go.Binding("text", "shortLabel")
-        )
-      ),
-      $(
-        go.Shape,
-        "Circle",
-        {
-          alignment: go.Spot.TopRight,
-          width: 15,
-          height: 15,
-          strokeWidth: 0,
-          fill: "#91d3c4"
-        },
-        new go.Binding("visible", "coordinator")
-      ),
-      $(
-        go.TextBlock,
-        {
-          alignment: go.Spot.Bottom,
-          alignmentFocus: go.Spot.Top,
-          margin: new go.Margin(8, 0, 0, 0),
-          stroke: "#d7d2c4",
-          font: "600 12px Inter, sans-serif",
-          maxSize: new go.Size(112, NaN),
-          textAlign: "center",
-          overflow: go.TextOverflow.Ellipsis
-        },
-        new go.Binding("text", "label")
-      )
-    );
-
-    diagramRef.current = diagram;
-    return () => {
-      diagram.div = null;
-      diagramRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const diagram = diagramRef.current;
-    if (!diagram) return;
-    const nextKey = JSON.stringify(modelData);
-    if (modelKeyRef.current === nextKey) return;
-    modelKeyRef.current = nextKey;
-    diagram.model = new go.GraphLinksModel({
-      nodeDataArray: [...modelData.groups, ...modelData.zones],
-      linkDataArray: []
-    });
-  }, [modelData]);
-
+export function GroupEditor(props: GroupEditorProps) {
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   return (
-    <section className={maximized ? "group-editor-panel maximized" : "group-editor-panel"} aria-label="Group editor">
+    <section className="group-editor-panel maximized" aria-label="Group editor">
       <div className="section-heading">
-        <h2>Group Editor</h2>
+        <div className="heading-leading">
+          {props.onClose ? (
+            <button
+              className="icon-button compact"
+              type="button"
+              title="Done editing"
+              aria-label="Done editing"
+              onClick={props.onClose}
+            >
+              <ArrowLeft size={16} />
+            </button>
+          ) : null}
+          <h2>Group Editor</h2>
+        </div>
         <div className="heading-actions">
-          <span>{busy ? "Saving" : `${groups.length} groups`}</span>
-          <button
-            className="icon-button compact"
-            type="button"
-            title={maximized ? "Minimize group editor" : "Maximize group editor"}
-            aria-label={maximized ? "Minimize group editor" : "Maximize group editor"}
-            onClick={() => setMaximized((current) => !current)}
-          >
-            {maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-          </button>
+          <span>{props.busy ? "Saving" : `${props.groups.length} groups`}</span>
         </div>
       </div>
-      <div className="group-editor-hint">Drag a room into a color to join it. Drag it outside to split it out.</div>
-      <div className="group-editor-canvas" ref={hostRef} />
+      <div className="group-editor-canvas" ref={canvasRef}>
+        <ReactFlowProvider>
+          <GroupFlow {...props} canvasRef={canvasRef} />
+        </ReactFlowProvider>
+      </div>
     </section>
   );
 }
 
-function isJsdom(): boolean {
-  return typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom");
+function GroupContainerNode({ data }: NodeProps<EditorNode>) {
+  if (data.kind !== "group") return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 8,
+        left: 14,
+        color: data.color,
+        fontSize: 12,
+        fontWeight: 700,
+        letterSpacing: 0.6,
+        textTransform: "uppercase",
+        pointerEvents: "none"
+      }}
+    >
+      {data.label}
+    </div>
+  );
 }
 
-function buildModelData(groups: SonosGroup[], selectedGroupId?: string) {
-  const groupNodes: GroupNodeData[] = groups.map((group, index) => {
-    const color = palette[index % palette.length];
-    return {
-      key: groupKey(group.id),
-      isGroup: true,
-      groupId: group.id,
-      label: group.coordinatorName,
-      color,
-      stroke: group.id === selectedGroupId ? "#f2f0e8" : color,
-      loc: `${index * 210} 0`
+interface MenuState {
+  x: number;
+  y: number;
+  zoneId: string;
+}
+
+const PickedZoneContext = createContext<{
+  pickedZoneId: string | null;
+  openMenu: (state: MenuState) => void;
+  suppressClickRef: { current: boolean };
+} | null>(null);
+
+function ZoneNode({ id, data }: NodeProps<EditorNode>) {
+  const ctx = useContext(PickedZoneContext);
+  const longPressTimerRef = useRef<number | null>(null);
+  if (data.kind !== "zone") return null;
+  const picked = ctx?.pickedZoneId === id;
+  const borderColor = picked ? "#f2f0e8" : data.coordinator ? "#f2f0e8" : data.color;
+
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  return (
+    <div
+      className={picked ? "zone-node picked" : "zone-node"}
+      onPointerDown={(event) => {
+        const x = event.clientX;
+        const y = event.clientY;
+        cancelLongPress();
+        longPressTimerRef.current = window.setTimeout(() => {
+          if (ctx) {
+            ctx.suppressClickRef.current = true;
+            ctx.openMenu({ x, y, zoneId: id });
+          }
+        }, 500);
+      }}
+      onPointerMove={cancelLongPress}
+      onPointerUp={cancelLongPress}
+      onPointerCancel={cancelLongPress}
+      onPointerLeave={cancelLongPress}
+      style={{
+        width: "100%",
+        height: "100%",
+        background: "#222827",
+        color: "#f2f0e8",
+        border: `2px ${picked ? "dashed" : "solid"} ${borderColor}`,
+        borderRadius: 10,
+        fontSize: 12,
+        fontWeight: 600,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        padding: "4px 8px",
+        cursor: "pointer",
+        touchAction: "none",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        WebkitTouchCallout: "none"
+      }}
+    >
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{data.label}</span>
+    </div>
+  );
+}
+
+const nodeTypes: NodeTypes = { groupContainer: GroupContainerNode, zoneNode: ZoneNode };
+
+interface ZoneActionMenuProps {
+  state: MenuState;
+  groups: SonosGroup[];
+  onClose: () => void;
+  onPromote: (zoneId: string) => void;
+  onMove: (zoneId: string, groupId: string) => void;
+  onSplit: (zoneId: string) => void;
+}
+
+function ZoneActionMenu({ state, groups, onClose, onPromote, onMove, onSplit }: ZoneActionMenuProps) {
+  let sourceGroup: SonosGroup | undefined;
+  let zoneName = "";
+  let isCoordinator = false;
+  for (const group of groups) {
+    const zone = group.zones.find((existing) => existing.id === state.zoneId);
+    if (zone) {
+      sourceGroup = group;
+      zoneName = zone.name;
+      isCoordinator = zone.uuid === group.coordinatorId;
+      break;
+    }
+  }
+  if (!sourceGroup) return null;
+  const visibleSource = sourceGroup.zones.filter((zone) => zone.visible);
+  const otherGroups = groups.filter((group) => group.id !== sourceGroup!.id && !isOptimisticGroupId(group.id));
+  const canPromote = !isCoordinator && visibleSource.length > 1;
+  const canSplit = visibleSource.length > 1;
+
+  return (
+    <>
+      <div className="action-menu-backdrop" onClick={onClose} onContextMenu={(event) => { event.preventDefault(); onClose(); }} />
+      <div className="action-menu" style={{ left: state.x, top: state.y }} role="menu">
+        <div className="action-menu-title">{zoneName}</div>
+        {canPromote ? (
+          <button type="button" className="action-menu-item" onClick={() => { onPromote(state.zoneId); onClose(); }}>
+            Make lead of group
+          </button>
+        ) : null}
+        {otherGroups.length > 0 ? <div className="action-menu-header">Move to</div> : null}
+        {otherGroups.map((group) => {
+          const visible = group.zones.filter((zone) => zone.visible);
+          const { color, name } = paletteForMembers(visible.map((zone) => zone.uuid));
+          const roomList = visible.map((zone) => zone.name).join(", ") || "empty";
+          return (
+            <button
+              key={group.id}
+              type="button"
+              className="action-menu-item"
+              onClick={() => { onMove(state.zoneId, group.id); onClose(); }}
+            >
+              <span className="action-menu-dot" style={{ background: color }} aria-hidden="true" />
+              <span className="action-menu-item-label">
+                <span>{name}</span>
+                <small>{roomList}</small>
+              </span>
+            </button>
+          );
+        })}
+        {canSplit ? (
+          <button type="button" className="action-menu-item" onClick={() => { onSplit(state.zoneId); onClose(); }}>
+            <span className="action-menu-dot action-menu-dot-new" aria-hidden="true">+</span>
+            <span className="action-menu-item-label"><span>New group</span></span>
+          </button>
+        ) : null}
+        <button type="button" className="action-menu-item action-menu-cancel" onClick={onClose}>Cancel</button>
+      </div>
+    </>
+  );
+}
+
+interface GroupFlowProps extends GroupEditorProps {
+  canvasRef: RefObject<HTMLDivElement | null>;
+}
+
+function GroupFlow({ groups, selectedGroupId, onSelectGroup, onJoinZoneGroup, onUngroupZone, onPromoteZone, canvasRef }: GroupFlowProps) {
+  const [nodes, setNodes, onNodesChange] = useNodesState<EditorNode>([]);
+  const [edges, , onEdgesChange] = useEdgesState([]);
+  const reactFlow = useReactFlow();
+
+  const callbacksRef = useRef({ onSelectGroup, onJoinZoneGroup, onUngroupZone, onPromoteZone });
+  callbacksRef.current = { onSelectGroup, onJoinZoneGroup, onUngroupZone, onPromoteZone };
+
+  const [pickedZone, setPickedZone] = useState<{ zoneId: string; groupId: string; label: string } | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const suppressClickRef = useRef(false);
+  const openMenu = useCallback((state: MenuState) => setMenu(state), []);
+  const pickedContext = useMemo(
+    () => ({ pickedZoneId: pickedZone?.zoneId ?? null, openMenu, suppressClickRef }),
+    [pickedZone, openMenu]
+  );
+
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: FALLBACK_CANVAS_WIDTH, h: FALLBACK_CANVAS_HEIGHT });
+
+  useLayoutEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    if (w > 0 && h > 0) setCanvasSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+  }, [canvasRef]);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let pending = 0;
+    const update = () => {
+      cancelAnimationFrame(pending);
+      pending = requestAnimationFrame(() => {
+        const rect = el.getBoundingClientRect();
+        const w = Math.round(rect.width);
+        const h = Math.round(rect.height);
+        if (w <= 0 || h <= 0) return;
+        setCanvasSize((prev) => {
+          if (Math.abs(prev.w - w) < 4 && Math.abs(prev.h - h) < 4) return prev;
+          return { w, h };
+        });
+      });
     };
-  });
-  const zoneNodes: ZoneNodeData[] = groups.flatMap((group, index) => {
-    const color = palette[index % palette.length];
-    return group.zones.map((zone) => ({
-      key: zone.id,
-      zoneId: zone.id,
-      group: groupKey(group.id),
-      groupId: group.id,
-      label: zone.name,
-      shortLabel: initials(zone.name),
-      color,
-      stroke: zone.uuid === group.coordinatorId ? "#f2f0e8" : color,
-      coordinator: zone.uuid === group.coordinatorId
-    }));
-  });
-  return { groups: groupNodes, zones: zoneNodes };
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => {
+      cancelAnimationFrame(pending);
+      observer.disconnect();
+    };
+  }, [canvasRef]);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => reactFlow.fitView({ padding: 0.02, duration: 0 }));
+    return () => cancelAnimationFrame(id);
+  }, [canvasSize, reactFlow]);
+  const slotsRef = useRef<Map<string, number>>(new Map());
+  const layout = useMemo(
+    () => buildLayout(groups, selectedGroupId, slotsRef.current, canvasSize),
+    [groups, selectedGroupId, canvasSize]
+  );
+  const layoutKey = useMemo(() => JSON.stringify(layout), [layout]);
+  const lastKeyRef = useRef("");
+
+  useEffect(() => {
+    if (lastKeyRef.current === layoutKey) return;
+    lastKeyRef.current = layoutKey;
+    setNodes(layout);
+  }, [layoutKey, layout, setNodes]);
+
+  const nodesInitialized = useNodesInitialized();
+
+  useEffect(() => {
+    if (!nodesInitialized) return;
+    const id = requestAnimationFrame(() => {
+      const groupBounds = layout
+        .filter((node) => node.data.kind === "group")
+        .map((node) => {
+          const w = typeof node.style?.width === "number" ? node.style.width : 0;
+          const h = typeof node.style?.height === "number" ? node.style.height : 0;
+          return { x: node.position.x, y: node.position.y, w, h };
+        })
+        .filter((box) => box.w > 0 && box.h > 0);
+      if (groupBounds.length === 0) {
+        reactFlow.fitView({ padding: 0.05, duration: 0 });
+        return;
+      }
+      const minX = Math.min(...groupBounds.map((b) => b.x));
+      const minY = Math.min(...groupBounds.map((b) => b.y));
+      const maxX = Math.max(...groupBounds.map((b) => b.x + b.w));
+      const maxY = Math.max(...groupBounds.map((b) => b.y + b.h));
+      reactFlow.fitBounds(
+        { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+        { padding: 0.05, duration: 0 }
+      );
+    });
+    return () => cancelAnimationFrame(id);
+  }, [nodesInitialized, layoutKey, layout, reactFlow]);
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<EditorNode>[]) => {
+      onNodesChange(changes.filter((change) => change.type !== "remove"));
+    },
+    [onNodesChange]
+  );
+
+  const handleNodeClick = useCallback<NodeMouseHandler<EditorNode>>((_event, node) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    const data = node.data;
+    if (pickedZone) {
+      const targetGroupId = data.groupId;
+      if (!targetGroupId || isOptimisticGroupId(targetGroupId)) {
+        setPickedZone(null);
+        return;
+      }
+      if (pickedZone.groupId !== targetGroupId) {
+        callbacksRef.current.onJoinZoneGroup(pickedZone.zoneId, targetGroupId);
+      }
+      setPickedZone(null);
+      return;
+    }
+    if (data.kind === "group") {
+      callbacksRef.current.onSelectGroup(data.groupId);
+      return;
+    }
+    if (data.kind === "zone" && data.groupId) {
+      setPickedZone({ zoneId: data.zoneId, groupId: data.groupId, label: data.label });
+      callbacksRef.current.onSelectGroup(data.groupId);
+    }
+  }, [pickedZone]);
+
+  const handlePaneClick = useCallback(() => {
+    if (!pickedZone) return;
+    const group = groups.find((existing) => existing.id === pickedZone.groupId);
+    const peerCount = group ? group.zones.filter((zone) => zone.visible).length : 0;
+    if (peerCount > 1) {
+      callbacksRef.current.onUngroupZone(pickedZone.zoneId);
+    }
+    setPickedZone(null);
+  }, [pickedZone, groups]);
+
+  const handleNodeContextMenu = useCallback<NodeMouseHandler<EditorNode>>((event, node) => {
+    if (node.data.kind !== "zone") return;
+    if (!node.data.groupId) return;
+    event.preventDefault();
+    setMenu({ x: event.clientX, y: event.clientY, zoneId: node.data.zoneId });
+  }, []);
+
+  const pickedLabel = pickedZone?.label ?? null;
+
+  return (
+    <PickedZoneContext.Provider value={pickedContext}>
+    <div className={pickedZone ? "group-editor-overlay-hint pick-mode" : "group-editor-overlay-hint"}>
+      {pickedLabel
+        ? `Moving ${pickedLabel} — tap a color to join, tap empty space to start a new group, or tap ${pickedLabel} again to cancel.`
+        : "Tap a room to pick it up."}
+    </div>
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      onNodesChange={handleNodesChange}
+      onEdgesChange={onEdgesChange}
+      onNodeClick={handleNodeClick}
+      onPaneClick={handlePaneClick}
+      onNodeContextMenu={handleNodeContextMenu}
+      nodesConnectable={false}
+      nodesFocusable={false}
+      edgesFocusable={false}
+      panOnDrag={false}
+      panOnScroll={false}
+      zoomOnScroll={false}
+      zoomOnPinch={false}
+      zoomOnDoubleClick={false}
+      selectionOnDrag={false}
+      selectNodesOnDrag={false}
+      nodeDragThreshold={3}
+      fitView
+      fitViewOptions={{ padding: 0.15 }}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background gap={28} color="rgba(242, 240, 232, 0.08)" />
+    </ReactFlow>
+    {menu ? (
+      <ZoneActionMenu
+        state={menu}
+        groups={groups}
+        onClose={() => { suppressClickRef.current = false; setMenu(null); }}
+        onPromote={(zoneId) => callbacksRef.current.onPromoteZone(zoneId)}
+        onMove={(zoneId, groupId) => callbacksRef.current.onJoinZoneGroup(zoneId, groupId)}
+        onSplit={(zoneId) => callbacksRef.current.onUngroupZone(zoneId)}
+      />
+    ) : null}
+    </PickedZoneContext.Provider>
+  );
 }
 
-function groupKey(groupId: string): string {
+function buildLayout(
+  groups: SonosGroup[],
+  selectedGroupId: string | undefined,
+  slots: Map<string, number>,
+  canvas: { w: number; h: number }
+): EditorNode[] {
+  const visibleZonesByGroup = groups.map((group) =>
+    group.zones.filter((zone) => zone.visible).slice().sort((a, b) => a.uuid.localeCompare(b.uuid))
+  );
+  const memberKeys = visibleZonesByGroup.map(membershipKey);
+
+  const liveKeys = new Set(memberKeys);
+  for (const key of Array.from(slots.keys())) {
+    if (!liveKeys.has(key)) slots.delete(key);
+  }
+  for (const key of memberKeys) {
+    if (slots.has(key)) continue;
+    const used = new Set(slots.values());
+    let next = 0;
+    while (used.has(next)) next++;
+    slots.set(key, next);
+  }
+  const groupSlots = memberKeys.map((key) => slots.get(key) as number);
+
+  const order = groups.map((_, index) => index).sort((a, b) => groupSlots[a] - groupSlots[b]);
+  const weights = order.map((index) => Math.max(1, visibleZonesByGroup[index].length));
+  const innerWidth = Math.max(160, canvas.w - CANVAS_PADDING_X * 2);
+  const innerHeight = Math.max(120, canvas.h - CANVAS_TOP_RESERVED - CANVAS_BOTTOM_RESERVED);
+  const rects = sliceAndDice(weights, { x: CANVAS_PADDING_X, y: CANVAS_TOP_RESERVED, w: innerWidth, h: innerHeight }, GROUP_GAP);
+
+  const result: EditorNode[] = [];
+  order.forEach((index, orderIndex) => {
+    const group = groups[index];
+    const visibleZones = visibleZonesByGroup[index];
+    const { color, name } = paletteForMembers(visibleZones.map((zone) => zone.uuid));
+    const isSelected = group.id === selectedGroupId;
+    const rect = rects[orderIndex];
+    const { zones } = fitZonesInGroup(visibleZones.length, rect);
+
+    result.push({
+      id: groupNodeId(group.id),
+      type: "groupContainer",
+      position: { x: rect.x, y: rect.y },
+      data: { kind: "group", groupId: group.id, label: name, color, selected: isSelected },
+      draggable: false,
+      selectable: true,
+      style: {
+        width: rect.w,
+        height: rect.h,
+        background: hexToRgba(color, 0.18),
+        border: `2px solid ${isSelected ? "#f2f0e8" : color}`,
+        borderRadius: 14,
+        padding: 0
+      }
+    });
+
+    visibleZones.forEach((zone, zoneIndex) => {
+      const zoneRect = zones[zoneIndex];
+      result.push({
+        id: zone.id,
+        type: "zoneNode",
+        parentId: groupNodeId(group.id),
+        extent: undefined,
+        position: { x: zoneRect.x, y: zoneRect.y },
+        data: {
+          kind: "zone",
+          zoneId: zone.id,
+          groupId: group.id,
+          label: zone.name,
+          color,
+          coordinator: zone.uuid === group.coordinatorId
+        },
+        draggable: false,
+        selectable: true,
+        style: { width: zoneRect.w, height: zoneRect.h, background: "transparent", border: "none", padding: 0 }
+      });
+    });
+  });
+  return result;
+}
+
+function groupNodeId(groupId: string): string {
   return `group:${groupId}`;
 }
 
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "?";
-  return words.slice(0, 2).map((word) => word[0].toUpperCase()).join("");
-}
-
-function selectedZoneNodes(diagram: go.Diagram): go.Node[] {
-  const nodes: go.Node[] = [];
-  diagram.selection.each((part) => {
-    if (part instanceof go.Node && part.data && !part.data.isGroup) nodes.push(part);
-  });
-  return nodes;
-}
-
-function nearestGroupForNodes(diagram: go.Diagram, nodes: go.Node[]): GroupNodeData | undefined {
-  const bounds = nodes.reduce(
-    (accumulator, node) => accumulator.unionRect(node.actualBounds),
-    nodes[0].actualBounds.copy()
-  );
-  const center = bounds.center;
-  let nearest: { distance: number; data: GroupNodeData } | undefined;
-  diagram.nodes.each((candidate) => {
-    if (!candidate.data?.isGroup) return;
-    const bounds = candidate.actualBounds;
-    const candidateCenter = bounds.center;
-    const distance = Math.hypot(center.x - candidateCenter.x, center.y - candidateCenter.y);
-    const threshold = Math.max(bounds.width, bounds.height) * 0.58;
-    if (distance <= threshold && (!nearest || distance < nearest.distance)) {
-      nearest = { distance, data: candidate.data as GroupNodeData };
-    }
-  });
-  return nearest?.data;
-}
-
-function groupSizesById(diagram: go.Diagram): Map<string, number> {
-  const sizes = new Map<string, number>();
-  diagram.nodes.each((candidate) => {
-    const groupId = candidate.data?.groupId;
-    if (!candidate.data?.isGroup && typeof groupId === "string") {
-      sizes.set(groupId, (sizes.get(groupId) ?? 0) + 1);
-    }
-  });
-  return sizes;
+function hexToRgba(hex: string, alpha: number): string {
+  const value = hex.replace("#", "");
+  const bigint = parseInt(value, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function isOptimisticGroupId(groupId: string): boolean {
