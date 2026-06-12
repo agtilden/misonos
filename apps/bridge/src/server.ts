@@ -181,8 +181,24 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
     if (request.method === "GET" && sourceSearchMatch) {
       const sourceId = decodeURIComponent(sourceSearchMatch[1]);
       const query = url.searchParams.get("q") ?? "";
+      const type = url.searchParams.get("type") ?? undefined;
       if (!query) return json(response, { error: "Missing q" }, 400);
-      return json(response, await service.searchSource(sourceId, query));
+      return json(response, await service.searchSource(sourceId, query, type));
+    }
+
+    const sourceAuthStatusMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/status$/);
+    if (request.method === "GET" && sourceAuthStatusMatch) {
+      return json(response, await service.sourceAuthStatus(decodeURIComponent(sourceAuthStatusMatch[1])));
+    }
+
+    const sourceAuthStartMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/start$/);
+    if (request.method === "POST" && sourceAuthStartMatch) {
+      return json(response, await service.sourceAuthStart(decodeURIComponent(sourceAuthStartMatch[1])));
+    }
+
+    const sourceAuthSignOutMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/signout$/);
+    if (request.method === "POST" && sourceAuthSignOutMatch) {
+      return json(response, await service.sourceAuthSignOut(decodeURIComponent(sourceAuthSignOutMatch[1])));
     }
 
     const sourceTrackMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/track$/);
@@ -222,6 +238,27 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       return json(response, await service.listSonosAccounts());
     }
 
+    if (request.method === "POST" && url.pathname === "/api/debug/smapi-sn-scan") {
+      const body = await readJson<{
+        sourceId?: string;
+        groupId?: string;
+        trackId?: string;
+        sid?: number;
+        serviceTokenMagic?: number;
+        flags?: number;
+        startSn?: number;
+        endSn?: number;
+        ext?: string;
+        uriScheme?: "x-sonos-http" | "x-sonosapi-stream";
+        descMode?: "anonymous" | "token";
+        refreshServices?: boolean;
+        playOnSuccess?: boolean;
+        clearQueueBeforeEach?: boolean;
+        stopAfterPlay?: boolean;
+      }>(request);
+      return json(response, await service.scanSmapiAccountIndices(body));
+    }
+
     if (request.method === "POST" && url.pathname === "/api/music/browse") {
       const body = await readJson<{ objectId: string; startingIndex?: number; requestedCount?: number; filter?: string; sortCriteria?: string }>(request);
       if (!body.objectId) return json(response, { error: "Missing objectId" }, 400);
@@ -241,6 +278,8 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
     try {
       await routes(request, response, new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`));
     } catch (error) {
+      console.error(`[bridge] ${request.method} ${request.url} failed:`, error instanceof Error ? error.message : error);
+      if (error instanceof Error && error.stack) console.error(error.stack);
       json(response, { error: errorMessage(error) }, 500);
     }
   });

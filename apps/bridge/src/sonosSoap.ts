@@ -7,7 +7,8 @@ export type ServiceType =
   | "ContentDirectory"
   | "DeviceProperties"
   | "ZoneGroupTopology"
-  | "MusicServices";
+  | "MusicServices"
+  | "SystemProperties";
 
 export class SonosSoapError extends Error {
   constructor(
@@ -47,11 +48,9 @@ export async function callSoap(
     const parsed = parseSoapResponse(text);
 
     if (!response.ok || !parsed.ok) {
-      throw new SonosSoapError(
-        parsed.fault?.description ?? `Sonos SOAP ${action} failed`,
-        response.status,
-        parsed.fault?.code
-      );
+      const message = `${parsed.fault?.description ?? "Sonos SOAP " + action + " failed"} (code=${parsed.fault?.code ?? "?"})`;
+      console.error(`[sonos-soap] ${action} -> ${response.status} ${message}\n  body: ${text.slice(0, 500)}`);
+      throw new SonosSoapError(message, response.status, parsed.fault?.code);
     }
 
     return parsed.values;
@@ -76,6 +75,8 @@ export function controlUrlForService(serviceType: ServiceType): string {
       return "/ZoneGroupTopology/Control";
     case "MusicServices":
       return "/MusicServices/Control";
+    case "SystemProperties":
+      return "/SystemProperties/Control";
   }
 }
 
@@ -95,6 +96,8 @@ export function eventUrlForService(serviceType: ServiceType): string {
       return "/ZoneGroupTopology/Event";
     case "MusicServices":
       return "/MusicServices/Event";
+    case "SystemProperties":
+      return "/SystemProperties/Event";
   }
 }
 

@@ -31,11 +31,19 @@ export interface YtmStreamInfo {
 }
 
 let client: Innertube | undefined;
+let initPromise: Promise<Innertube> | null = null;
 
-async function getClient(): Promise<Innertube> {
+export async function getClient(): Promise<Innertube> {
   if (client) return client;
-  client = await Innertube.create({ retrieve_player: true });
-  return client;
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    // Always run anonymously — restored OAuth sessions cause player/next calls
+    // to 400, and we don't currently use auth for browse anyway.
+    const yt = await Innertube.create({ retrieve_player: true });
+    client = yt;
+    return yt;
+  })().finally(() => { initPromise = null; });
+  return initPromise;
 }
 
 interface RawSongResult {

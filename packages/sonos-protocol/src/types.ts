@@ -137,6 +137,10 @@ export interface RegisterCustomServiceResult {
   body: string;
   attemptedUri: string;
   speakerIp: string;
+  accountType?: string;
+  accountUdn?: string;
+  accountError?: string;
+  refreshError?: string;
 }
 
 export interface SourceDescriptor {
@@ -148,7 +152,7 @@ export interface SourceDescriptor {
   capabilities?: string[];
 }
 
-export type SourceItemKind = "container" | "album" | "playable";
+export type SourceItemKind = "container" | "album" | "playable" | "section";
 
 export interface SourceBrowseItem {
   id: string;
@@ -175,6 +179,7 @@ export interface SourceTrackInfo {
   artist?: string;
   album?: string;
   durationSeconds?: number;
+  albumArtUri?: string;
   url: string;
   mimeType?: string;
 }

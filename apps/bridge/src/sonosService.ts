@@ -1,10 +1,10 @@
 import { firstDidlItem, parseDidlItems, type BridgeSnapshot, type NowPlaying, type PlaybackState, type QueueItem, type SonosGroup, type SonosZone, type TransportAction, type VolumePayload, type VolumeState } from "@misonos/sonos-protocol";
 import { loadConfig, type BridgeConfig } from "./config.js";
 import { discoverSsdp } from "./ssdp.js";
-import { callSoap } from "./sonosSoap.js";
+import { callSoap, SonosSoapError, type ServiceType } from "./sonosSoap.js";
 import { fetchDeviceInfo } from "./deviceInfo.js";
 import type { PlaybackMode, SonosDeviceInfo, SourceBrowseResponse, SourceDescriptor, SourceTrackInfo } from "@misonos/sonos-protocol";
-import { browseSource, fetchTrack, listSources, searchSource } from "./sources.js";
+import { browseSource, fetchTrack, listSources, searchSource, sourceAuthStart, sourceAuthSignOut, sourceAuthStatus } from "./sources.js";
 import {
   buildServiceUri,
   detectLanIp,
@@ -16,6 +16,60 @@ import {
 } from "./customServices.js";
 import { discoverMusicServices, fetchSonosAccounts, type MusicServiceDiscovery, type SonosAccountsResponse } from "./musicServices.js";
 import { parseZoneGroupState, zoneFromDeviceDescription } from "./topology.js";
+
+export interface SmapiAccountScanOptions {
+  sourceId?: string;
+  groupId?: string;
+  trackId?: string;
+  sid?: number;
+  serviceTokenMagic?: number;
+  flags?: number;
+  startSn?: number;
+  endSn?: number;
+  ext?: string;
+  uriScheme?: "x-sonos-http" | "x-sonosapi-stream";
+  descMode?: "anonymous" | "token";
+  refreshServices?: boolean;
+  playOnSuccess?: boolean;
+  clearQueueBeforeEach?: boolean;
+  stopAfterPlay?: boolean;
+}
+
+export interface SmapiSoapAttempt {
+  ok: boolean;
+  status?: number;
+  faultCode?: string;
+  message?: string;
+}
+
+export interface SmapiAccountScanAttempt {
+  sn: number;
+  uri: string;
+  addUriToQueue: SmapiSoapAttempt;
+  play?: SmapiSoapAttempt;
+  outcome: "queue-rejected" | "queue-fault" | "queue-accepted" | "play-fault" | "play-accepted";
+}
+
+export interface SmapiAccountScanResult {
+  sourceId: string;
+  groupId: string;
+  coordinatorId: string;
+  coordinatorIp: string;
+  sid: number;
+  serviceTokenMagic: number;
+  flags: number;
+  uriScheme: string;
+  descMode: "anonymous" | "token";
+  trackId: string;
+  startSn: number;
+  endSn: number;
+  playOnSuccess: boolean;
+  clearQueueBeforeEach: boolean;
+  serviceRefresh?: SmapiSoapAttempt;
+  results: SmapiAccountScanAttempt[];
+  summary: Record<string, number>;
+  scannedAt: string;
+}
 
 export class SonosService {
   private zones = new Map<string, SonosZone>();
@@ -342,12 +396,124 @@ export class SonosService {
     return browseSource(sourceId, id);
   }
 
-  searchSource(sourceId: string, query: string): Promise<SourceBrowseResponse> {
-    return searchSource(sourceId, query);
+  searchSource(sourceId: string, query: string, type?: string): Promise<SourceBrowseResponse> {
+    return searchSource(sourceId, query, type);
+  }
+
+  sourceAuthStatus(sourceId: string): Promise<unknown> {
+    return sourceAuthStatus(sourceId);
+  }
+
+  sourceAuthStart(sourceId: string): Promise<unknown> {
+    return sourceAuthStart(sourceId);
+  }
+
+  sourceAuthSignOut(sourceId: string): Promise<unknown> {
+    return sourceAuthSignOut(sourceId);
   }
 
   fetchSourceTrack(sourceId: string, id: string): Promise<SourceTrackInfo> {
     return fetchTrack(sourceId, id);
+  }
+
+  async scanSmapiAccountIndices(options: SmapiAccountScanOptions): Promise<SmapiAccountScanResult> {
+    const sourceId = options.sourceId ?? "youtube-music";
+    const baseSmapi = SMAPI_SOURCE_INFO[sourceId];
+    if (!baseSmapi && options.sid === undefined) throw new Error(`No SMAPI source info for ${sourceId}`);
+
+    const sid = options.sid ?? baseSmapi?.sid;
+    const serviceTokenMagic = options.serviceTokenMagic ?? baseSmapi?.serviceTokenMagic;
+    if (sid === undefined || serviceTokenMagic === undefined) {
+      throw new Error("sid and serviceTokenMagic are required for unknown SMAPI sources");
+    }
+    const startSn = options.startSn ?? 0;
+    const endSn = options.endSn ?? 255;
+    if (!Number.isInteger(startSn) || !Number.isInteger(endSn) || startSn < 0 || endSn > 255 || startSn > endSn) {
+      throw new Error("startSn/endSn must be an inclusive range inside 0..255");
+    }
+    if (endSn - startSn > 255) throw new Error("SMAPI sn scan range is too large");
+
+    const group = options.groupId
+      ? await this.requireGroup(options.groupId)
+      : await this.firstGroup();
+    const coordinator = await this.requireZone(group.coordinatorId);
+    const track = await this.scanTrack(sourceId, options.trackId);
+    const ext = options.ext ?? extensionForMime(track.mimeType);
+    const flags = options.flags ?? 8224;
+    const uriScheme = options.uriScheme ?? "x-sonos-http";
+    const descMode = options.descMode ?? baseSmapi?.descMode ?? "anonymous";
+    const refreshServices = options.refreshServices ?? true;
+    const playOnSuccess = options.playOnSuccess ?? false;
+    const clearQueueBeforeEach = options.clearQueueBeforeEach ?? playOnSuccess;
+    const stopAfterPlay = options.stopAfterPlay ?? true;
+
+    const serviceRefresh = refreshServices
+      ? await this.trySoap(coordinator.ipAddress, "MusicServices", "UpdateAvailableServices")
+      : undefined;
+    const results: SmapiAccountScanAttempt[] = [];
+
+    for (let sn = startSn; sn <= endSn; sn += 1) {
+      if (clearQueueBeforeEach) {
+        await this.trySoap(coordinator.ipAddress, "AVTransport", "RemoveAllTracksFromQueue", { InstanceID: 0 });
+      }
+
+      const smapi = { sid, sn, serviceTokenMagic };
+      const uri = buildSmapiUri(track.id, ext, smapi, flags, uriScheme);
+      const metadata = buildSmapiDidl({ ...track, id: track.id, url: uri }, smapi, descMode);
+      const attempt: SmapiAccountScanAttempt = { sn, uri, addUriToQueue: { ok: false }, outcome: "queue-rejected" };
+      results.push(attempt);
+
+      const enqueue = await this.trySoap(coordinator.ipAddress, "AVTransport", "AddURIToQueue", {
+        InstanceID: 0,
+        EnqueuedURI: uri,
+        EnqueuedURIMetaData: metadata,
+        DesiredFirstTrackNumberEnqueued: 0,
+        EnqueueAsNext: 0
+      });
+      attempt.addUriToQueue = enqueue;
+      if (!enqueue.ok) {
+        attempt.outcome = enqueue.faultCode === "800" ? "queue-rejected" : "queue-fault";
+        continue;
+      }
+
+      attempt.outcome = "queue-accepted";
+      if (!playOnSuccess) continue;
+
+      await this.trySoap(coordinator.ipAddress, "AVTransport", "SetAVTransportURI", {
+        InstanceID: 0,
+        CurrentURI: `x-rincon-queue:${coordinator.uuid}#0`,
+        CurrentURIMetaData: ""
+      });
+      await this.trySoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: "1" });
+      const play = await this.trySoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
+      attempt.play = play;
+      attempt.outcome = play.ok ? "play-accepted" : "play-fault";
+
+      if (stopAfterPlay) {
+        await this.trySoap(coordinator.ipAddress, "AVTransport", "Stop", { InstanceID: 0 });
+      }
+    }
+
+    return {
+      sourceId,
+      groupId: group.id,
+      coordinatorId: coordinator.uuid,
+      coordinatorIp: coordinator.ipAddress,
+      sid,
+      serviceTokenMagic,
+      flags,
+      uriScheme,
+      descMode,
+      trackId: track.id,
+      startSn,
+      endSn,
+      playOnSuccess,
+      clearQueueBeforeEach,
+      serviceRefresh,
+      results,
+      summary: summarizeSmapiScan(results),
+      scannedAt: new Date().toISOString()
+    };
   }
 
   async playSourceItems(options: { sourceId: string; trackIds: string[]; groupId: string; mode: PlaybackMode }): Promise<NowPlaying> {
@@ -361,6 +527,23 @@ export class SonosService {
       const ext = extensionForMime(track.mimeType);
       const titleSlug = urlSafeSlug(track.title);
       const proxyUrl = `http://${bridgeHost}:${this.config.port}/api/stream/${encodeURIComponent(options.sourceId)}/${encodeURIComponent(options.trackIds[index])}/${titleSlug}${ext}`;
+      // For sources registered as a Sonos SMAPI custom service (sid=255 by
+      // default), use the x-sonosapi-stream:// URI scheme so Sonos calls our
+      // SMAPI endpoint for the actual URL + metadata. Required for non-mp3
+      // streams (audio/mp4) where S1 ignores DIDL on plain http URIs.
+      const smapi = SMAPI_SOURCE_INFO[options.sourceId];
+      if (smapi) {
+        // x-sonos-http on-demand URI. sid here is the raw sid (255 for custom),
+        // and serviceTokenMagic is what goes into the desc <SA_RINCON...>
+        // binding, not the URI sid. S1's sid=255 custom slot uses 65280.
+        const smapiUri = `x-sonos-http:${encodeURIComponent(options.trackIds[index])}${ext}?sid=${smapi.sid}&flags=8224&sn=${smapi.sn}`;
+        const metadata = buildSmapiDidl({
+          ...track,
+          id: options.trackIds[index],
+          url: smapiUri
+        }, smapi);
+        return { uri: smapiUri, metadata };
+      }
       const proxiedTrack: SourceTrackInfo = { ...track, url: proxyUrl };
       return { uri: proxyUrl, metadata: buildDidl(proxiedTrack) };
     });
@@ -384,13 +567,20 @@ export class SonosService {
       await callSoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: "1" });
       await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
     } else if (options.mode === "next") {
-      // Add in reverse so the first selected track lands immediately after the current track
-      for (const item of [...queueItems].reverse()) {
+      // EnqueueAsNext=1 alone isn't reliable on Sonos S1 — it can append. Read
+      // the current track number and insert explicitly at currentTrack+1.
+      const position = await callSoap(coordinator.ipAddress, "AVTransport", "GetPositionInfo", { InstanceID: 0 });
+      const currentTrack = Number.parseInt(position.Track ?? "0", 10);
+      const insertAt = Number.isFinite(currentTrack) && currentTrack > 0 ? currentTrack + 1 : 1;
+      // Walk in order; each successive insert goes right after the previous one
+      // so the selected set lands contiguous after the currently playing track.
+      for (let index = 0; index < queueItems.length; index++) {
+        const item = queueItems[index];
         await callSoap(coordinator.ipAddress, "AVTransport", "AddURIToQueue", {
           InstanceID: 0,
           EnqueuedURI: item.uri,
           EnqueuedURIMetaData: item.metadata,
-          DesiredFirstTrackNumberEnqueued: 0,
+          DesiredFirstTrackNumberEnqueued: insertAt + index,
           EnqueueAsNext: 1
         });
       }
@@ -484,6 +674,42 @@ export class SonosService {
       numberReturned: response.NumberReturned,
       totalMatches: response.TotalMatches
     };
+  }
+
+  private async firstGroup(): Promise<SonosGroup> {
+    await this.snapshot();
+    const group = [...this.groups.values()][0];
+    if (!group) throw new Error("No reachable Sonos group");
+    return group;
+  }
+
+  private async scanTrack(sourceId: string, trackId: string | undefined): Promise<SourceTrackInfo> {
+    if (trackId) return fetchTrack(sourceId, trackId);
+    return {
+      id: "misonos-smapi-sn-scan",
+      title: "MiSonos SMAPI SN Scan",
+      artist: "MiSonos",
+      album: "Diagnostics",
+      url: "",
+      mimeType: "audio/mp4"
+    };
+  }
+
+  private async trySoap(
+    ipAddress: string,
+    serviceType: ServiceType,
+    action: string,
+    args: Record<string, unknown> = {}
+  ): Promise<SmapiSoapAttempt> {
+    try {
+      await callSoap(ipAddress, serviceType, action, args);
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof SonosSoapError) {
+        return { ok: false, status: error.status, faultCode: error.faultCode, message: error.message };
+      }
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private async refreshTopology(seed?: SonosZone): Promise<void> {
@@ -596,15 +822,99 @@ function buildDidl(track: SourceTrackInfo): string {
   // protocolInfo doesn't carry DLNA streaming flags for non-MP3 mimes. Force
   // streaming + byte-seek hints regardless of mime so the title we pass sticks.
   const protocolInfo = `http-get:*:${escapeXml(mime)}:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000`;
+  const durationAttr = typeof track.durationSeconds === "number" && track.durationSeconds > 0
+    ? ` duration="${formatUpnpDuration(track.durationSeconds)}"`
+    : "";
+  // Element order matters for some DIDL parsers — keep title/creator first,
+  // then res, then upnp:class. albumArtURI goes after class per spec.
+  const inner =
+    `<item id="${escapeXml(track.id)}" parentID="-1" restricted="true">` +
+    `<dc:title>${escapeXml(track.title)}</dc:title>` +
+    (track.artist ? `<dc:creator>${escapeXml(track.artist)}</dc:creator>` : "") +
+    (track.artist ? `<upnp:artist>${escapeXml(track.artist)}</upnp:artist>` : "") +
+    (track.album ? `<upnp:album>${escapeXml(track.album)}</upnp:album>` : "") +
+    `<res protocolInfo="${protocolInfo}"${durationAttr}>${escapeXml(track.url)}</res>` +
+    `<upnp:class>object.item.audioItem.musicTrack</upnp:class>` +
+    (track.albumArtUri ? `<upnp:albumArtURI>${escapeXml(track.albumArtUri)}</upnp:albumArtURI>` : "") +
+    `</item>`;
+  return `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">${inner}</DIDL-Lite>`;
+}
+
+interface SmapiSourceInfo {
+  sid: number;
+  sn: number;
+  // The "cdudn" desc id Sonos uses to map a stream back to its music service.
+  serviceTokenMagic: number;
+  descMode?: "anonymous" | "token";
+}
+
+const SMAPI_SOURCE_INFO: Record<string, SmapiSourceInfo> = {
+  // S1 customsd accepts raw sid=255, but x-sonos-http queue parsing only
+  // accepts the legacy custom-service token id Svc65280 for that slot.
+  "youtube-music": {
+    sid: 255,
+    sn: Number.parseInt(process.env.MISONOS_YTM_SN ?? "0", 10),
+    serviceTokenMagic: 65280,
+    descMode: "token"
+  }
+};
+
+function buildSmapiDidl(
+  track: SourceTrackInfo & { id: string },
+  smapi: SmapiSourceInfo,
+  descMode: "anonymous" | "token" = smapi.descMode ?? "anonymous"
+): string {
+  // Anonymous-auth services usually use just "SA_RINCON{magic}_"; the
+  // _X_#Svc...-0-Token suffix is the DeviceLink/AppLink form seen in captures.
+  const desc = descMode === "token"
+    ? `SA_RINCON${smapi.serviceTokenMagic}_X_#Svc${smapi.serviceTokenMagic}-0-Token`
+    : `SA_RINCON${smapi.serviceTokenMagic}_`;
   const inner =
     `<item id="${escapeXml(track.id)}" parentID="-1" restricted="true">` +
     `<dc:title>${escapeXml(track.title)}</dc:title>` +
     (track.artist ? `<dc:creator>${escapeXml(track.artist)}</dc:creator>` : "") +
     (track.album ? `<upnp:album>${escapeXml(track.album)}</upnp:album>` : "") +
-    `<res protocolInfo="${protocolInfo}">${escapeXml(track.url)}</res>` +
+    (track.albumArtUri ? `<upnp:albumArtURI>${escapeXml(track.albumArtUri)}</upnp:albumArtURI>` : "") +
     `<upnp:class>object.item.audioItem.musicTrack</upnp:class>` +
+    `<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">${escapeXml(desc)}</desc>` +
     `</item>`;
-  return `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">${inner}</DIDL-Lite>`;
+  return `<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/">${inner}</DIDL-Lite>`;
+}
+
+function buildSmapiUri(
+  trackId: string,
+  ext: string,
+  smapi: SmapiSourceInfo,
+  flags: number,
+  uriScheme: "x-sonos-http" | "x-sonosapi-stream"
+): string {
+  const encodedTrackId = encodeURIComponent(trackId);
+  if (uriScheme === "x-sonosapi-stream") {
+    return `x-sonosapi-stream:${encodedTrackId}?sid=${smapi.sid}&flags=${flags}&sn=${smapi.sn}`;
+  }
+  return `x-sonos-http:${encodedTrackId}${ext}?sid=${smapi.sid}&flags=${flags}&sn=${smapi.sn}`;
+}
+
+function summarizeSmapiScan(results: SmapiAccountScanAttempt[]): Record<string, number> {
+  const summary: Record<string, number> = {};
+  for (const result of results) {
+    const addCode = result.addUriToQueue.ok ? "queue-ok" : `queue-${result.addUriToQueue.faultCode ?? "error"}`;
+    summary[addCode] = (summary[addCode] ?? 0) + 1;
+    if (result.play) {
+      const playCode = result.play.ok ? "play-ok" : `play-${result.play.faultCode ?? "error"}`;
+      summary[playCode] = (summary[playCode] ?? 0) + 1;
+    }
+    summary[result.outcome] = (summary[result.outcome] ?? 0) + 1;
+  }
+  return summary;
+}
+
+function formatUpnpDuration(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const hh = Math.floor(total / 3600);
+  const mm = Math.floor((total % 3600) / 60);
+  const ss = total % 60;
+  return `${hh}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}.000`;
 }
 
 function urlSafeSlug(value: string): string {

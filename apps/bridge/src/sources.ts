@@ -48,11 +48,29 @@ export async function fetchTrack(sourceId: string, id: string): Promise<SourceTr
   return fetchJson<SourceTrackInfo>(target);
 }
 
-export async function searchSource(sourceId: string, query: string): Promise<SourceBrowseResponse> {
+export async function searchSource(sourceId: string, query: string, type?: string): Promise<SourceBrowseResponse> {
   const config = requireConfig(sourceId);
   const target = new URL("/search", config.baseUrl);
   target.searchParams.set("q", query);
+  if (type) target.searchParams.set("type", type);
   return fetchJson<SourceBrowseResponse>(target);
+}
+
+export async function sourceAuthStatus(sourceId: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  return fetchJson<unknown>(new URL("/auth/status", config.baseUrl));
+}
+
+export async function sourceAuthStart(sourceId: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  // Cold-start can take 10-30s while youtubei.js downloads the player JS, so
+  // give this call a longer timeout than ordinary browse calls.
+  return fetchJson<unknown>(new URL("/auth/start", config.baseUrl), { method: "POST" }, 45000);
+}
+
+export async function sourceAuthSignOut(sourceId: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  return fetchJson<unknown>(new URL("/auth/signout", config.baseUrl), { method: "POST" });
 }
 
 async function fetchInfo(config: SourceConfig): Promise<SourceDescriptor> {
@@ -71,11 +89,11 @@ function requireConfig(sourceId: string): SourceConfig {
   return config;
 }
 
-async function fetchJson<T>(target: URL): Promise<T> {
+async function fetchJson<T>(target: URL, init?: RequestInit, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(target, { signal: controller.signal });
+    const response = await fetch(target, { ...init, signal: controller.signal });
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`Source ${target.host} returned ${response.status}: ${text.slice(0, 200)}`);
