@@ -1,0 +1,67 @@
+# Sonos discovery (SSDP multicast), speaker event callbacks, and speakers
+# fetching audio from the bridge all require the containers to share the host's
+# LAN interface -> network_mode: host. This works on a LINUX host only (it is a
+# no-op on Docker Desktop for Mac/Windows).
+services:
+  bridge:
+    build:
+      context: .
+      target: node-runtime
+    image: misonos-node
+    command: node apps/bridge/dist/index.js
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      MISONOS_BRIDGE_PORT: "4317"
+      # REQUIRED on a multi-homed host (e.g. with Tailscale): the LAN IP your
+      # Sonos speakers can reach. Without this the bridge may auto-pick the
+      # 100.x Tailscale address and speakers won't be able to fetch streams.
+      MISONOS_BRIDGE_PUBLIC_HOST: "${MISONOS_LAN_IP}"
+      MISONOS_GRATEFUL_URL: "http://127.0.0.1:4319"
+      MISONOS_PHISH_URL: "http://127.0.0.1:4320"
+      MISONOS_YTM_URL: "http://127.0.0.1:4321"
+
+  grateful:
+    image: misonos-node
+    command: node apps/grateful-smapi/dist/index.js
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [bridge]
+    environment:
+      MISONOS_GRATEFUL_PORT: "4319"
+      MISONOS_GRATEFUL_DB: "/data/gratefuldead.db"
+    volumes:
+      # Copy gratefuldead.db into ./data on the host before starting.
+      - ./data/gratefuldead.db:/data/gratefuldead.db:ro
+
+  phish:
+    image: misonos-node
+    command: node apps/phish-smapi/dist/index.js
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [bridge]
+    environment:
+      MISONOS_PHISH_PORT: "4320"
+      MISONOS_PHISH_API_KEY: "${MISONOS_PHISH_API_KEY:-}"
+
+  ytmusic:
+    image: misonos-node
+    command: node apps/ytmusic-smapi/dist/index.js
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [bridge]
+    environment:
+      MISONOS_YTM_PORT: "4321"
+      # OAuth tokens are written here so YouTube Music stays signed in across restarts.
+      YTMUSIC_CREDENTIALS_PATH: "/data/ytmusic.json"
+    volumes:
+      - ./data:/data
+
+  web:
+    build:
+      context: .
+      target: web
+    image: misonos-web
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [bridge]

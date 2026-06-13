@@ -1,0 +1,18 @@
+# Serves the built PWA and reverse-proxies the bridge API on a single origin,
+# preserving the same-origin /api/* model the web app expects.
+:6173 {
+	encode gzip
+	root * /srv
+
+	handle /api/* {
+		# flush_interval -1 disables buffering so SSE (/api/events) streams live.
+		reverse_proxy 127.0.0.1:4317 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
