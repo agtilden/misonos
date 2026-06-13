@@ -77,6 +77,17 @@ PLIST
 
 # The launcher's contents are part of the app's code identity, so the granted
 # permission stays valid as long as this file does not change. Keep it minimal.
+#
+# CRITICAL: the bridge must run as the app bundle's OWN process (final `exec`,
+# no npm/tsx child). Only then does macOS attribute its Local Network access to
+# MiSonos.app and prompt to grant it. A launcher that `exec npm start` puts the
+# LAN-accessing node ~5 spawns deep, so macOS attributes it to bare `node` and
+# silently denies it with no prompt. The bridge is the ONLY process that touches
+# the LAN; the SMAPI sources + web only listen / reach the internet, so they run
+# as background children that don't need the grant.
+echo "Building the bridge (dist) so the bundle can run it directly"
+( cd "$REPO" && npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge ) >/dev/null
+
 {
   echo '#!/bin/sh'
   echo "export PATH=\"$NODE_BIN_DIR:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\""
@@ -84,7 +95,20 @@ PLIST
     echo "export MISONOS_BRIDGE_PUBLIC_HOST=$HOST"
   fi
   echo "cd \"$REPO\" || exit 1"
-  echo 'exec npm start >> "$HOME/Library/Logs/misonos-bridge.out.log" 2>> "$HOME/Library/Logs/misonos-bridge.err.log"'
+  echo 'LOG="$HOME/Library/Logs"'
+  echo '# Clear any stale instances so a relaunch does not fight for ports.'
+  echo 'pkill -f "tsx watch src/index.ts" 2>/dev/null'
+  echo 'pkill -f "vite preview" 2>/dev/null'
+  echo 'pkill -f "apps/bridge/dist/index.js" 2>/dev/null'
+  echo 'sleep 1'
+  echo '# Non-LAN services (speakers connect TO these; no Local Network grant needed).'
+  echo 'npm run dev -w @misonos/grateful-smapi >> "$LOG/misonos-grateful.log" 2>&1 &'
+  echo 'npm run dev -w @misonos/phish-smapi    >> "$LOG/misonos-phish.log" 2>&1 &'
+  echo 'npm run dev -w @misonos/ytmusic-smapi  >> "$LOG/misonos-ytmusic.log" 2>&1 &'
+  echo 'npm run preview -w @misonos/web        >> "$LOG/misonos-web.log" 2>&1 &'
+  echo '# The bridge becomes the bundle process itself (no npm/tsx child) so macOS'
+  echo '# attributes Local Network access to MiSonos.app.'
+  echo 'exec node apps/bridge/dist/index.js >> "$LOG/misonos-bridge.out.log" 2>> "$LOG/misonos-bridge.err.log"'
 } > "$APP/Contents/MacOS/misonos"
 chmod +x "$APP/Contents/MacOS/misonos"
 
