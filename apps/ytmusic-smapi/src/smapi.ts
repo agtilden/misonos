@@ -95,17 +95,42 @@ async function handleGetMediaURI(body: string): Promise<string> {
 }
 
 function bridgeStreamUrl(videoId: string): string {
-  const base = process.env.MISONOS_STREAM_BASE ?? `http://${detectLanIp() ?? "127.0.0.1"}:4317`;
+  // The stream URL is fetched by the Sonos speaker, so it must be a LAN address
+  // the speaker can reach. Honor MISONOS_STREAM_BASE, then the bridge's own
+  // public-host override (same var the bridge uses for its stream proxy), and
+  // only then fall back to interface auto-detection.
+  const host = process.env.MISONOS_BRIDGE_PUBLIC_HOST ?? detectLanIp() ?? "127.0.0.1";
+  const base = process.env.MISONOS_STREAM_BASE ?? `http://${host}:4317`;
   const trackId = encodeURIComponent(encodeId({ kind: "track", videoId }));
   return `${base}/api/stream/youtube-music/${trackId}.m4a`;
 }
 
 function detectLanIp(): string | null {
+  // Skip Tailscale/VPN CGNAT addresses (100.64.0.0/10) and link-local — the
+  // Sonos speaker is on the physical LAN and can't reach those. Prefer a real
+  // private-LAN address; fall back to the first usable one otherwise.
+  let fallback: string | null = null;
   for (const list of Object.values(networkInterfaces())) {
     if (!list) continue;
     for (const iface of list) {
-      if (iface.family === "IPv4" && !iface.internal) return iface.address;
+      if (iface.family !== "IPv4" || iface.internal) continue;
+      if (isCgnat(iface.address) || iface.address.startsWith("169.254.")) continue;
+      fallback ??= iface.address;
+      if (isPrivateLan(iface.address)) return iface.address;
     }
   }
-  return null;
+  return fallback;
+}
+
+function isCgnat(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+  return a === 100 && b >= 64 && b <= 127;
+}
+
+function isPrivateLan(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+  if (a === 192 && b === 168) return true;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
 }

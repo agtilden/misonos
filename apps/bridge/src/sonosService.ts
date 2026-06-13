@@ -247,7 +247,23 @@ export class SonosService {
       previous: "Previous"
     } satisfies Record<TransportAction, string>;
     const args = action === "play" ? { InstanceID: 0, Speed: 1 } : { InstanceID: 0 };
-    await callSoap(coordinator.ipAddress, "AVTransport", soapAction[action], args);
+    try {
+      await callSoap(coordinator.ipAddress, "AVTransport", soapAction[action], args);
+    } catch (error) {
+      // 701 "Transition not available" on Play means the coordinator's transport
+      // isn't pointed at its queue (e.g. tracks were enqueued without playing, or
+      // the speaker was idle). Point it at the queue and retry once.
+      if (action === "play" && error instanceof SonosSoapError && error.faultCode === "701") {
+        await callSoap(coordinator.ipAddress, "AVTransport", "SetAVTransportURI", {
+          InstanceID: 0,
+          CurrentURI: `x-rincon-queue:${coordinator.uuid}#0`,
+          CurrentURIMetaData: ""
+        });
+        await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
+      } else {
+        throw error;
+      }
+    }
     return this.nowPlayingSettled(groupId);
   }
 
