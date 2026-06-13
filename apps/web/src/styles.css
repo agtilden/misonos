@@ -1564,7 +1564,16 @@ small {
 
 @media (max-width: 640px) {
   .app-shell {
-    padding: 14px;
+    /* No top padding: keep the sticky topbar flush so it doesn't drift on scroll. */
+    padding: 0 14px 14px;
+  }
+
+  /* Match the 14px mobile gutter so the full-bleed sticky bar lines up with it. */
+  .topbar.compact.main {
+    margin-left: -14px;
+    margin-right: -14px;
+    padding-left: 14px;
+    padding-right: 14px;
   }
 
   .topbar {
