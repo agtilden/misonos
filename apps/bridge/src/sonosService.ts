@@ -411,14 +411,12 @@ export class SonosService {
   }
 
   async listMusicServices(): Promise<MusicServiceDiscovery> {
-    const seed = [...this.zones.values()].find((zone) => zone.visible);
-    if (!seed) throw new Error("No reachable Sonos zone");
+    const seed = await this.firstVisibleZone();
     return discoverMusicServices(seed);
   }
 
   async listSonosAccounts(): Promise<SonosAccountsResponse> {
-    const seed = [...this.zones.values()].find((zone) => zone.visible);
-    if (!seed) throw new Error("No reachable Sonos zone");
+    const seed = await this.firstVisibleZone();
     return fetchSonosAccounts(seed);
   }
 
@@ -661,6 +659,7 @@ export class SonosService {
   }
 
   async listDevices(): Promise<SonosDeviceInfo[]> {
+    await this.snapshot();
     const visible = [...this.zones.values()].filter((zone) => zone.visible);
     const results = await Promise.all(visible.map((zone) => fetchDeviceInfo(zone)));
     return results.sort((a, b) => a.zoneName.localeCompare(b.zoneName));
@@ -673,8 +672,7 @@ export class SonosService {
     filter?: string;
     sortCriteria?: string;
   }): Promise<{ raw: string; items: QueueItem[]; numberReturned?: string; totalMatches?: string }> {
-    const seed = [...this.zones.values()].find((zone) => zone.visible);
-    if (!seed) throw new Error("No reachable Sonos zone");
+    const seed = await this.firstVisibleZone();
     const response = await callSoap(seed.ipAddress, "ContentDirectory", "Browse", {
       ObjectID: options.objectId,
       BrowseFlag: "BrowseDirectChildren",
@@ -699,8 +697,7 @@ export class SonosService {
     filter?: string;
     sortCriteria?: string;
   }): Promise<{ raw: string; items: QueueItem[]; numberReturned?: string; totalMatches?: string }> {
-    const seed = [...this.zones.values()].find((zone) => zone.visible);
-    if (!seed) throw new Error("No reachable Sonos zone");
+    const seed = await this.firstVisibleZone();
     const response = await callSoap(seed.ipAddress, "ContentDirectory", "Search", {
       ContainerID: options.containerId,
       SearchCriteria: options.searchCriteria,
@@ -722,6 +719,13 @@ export class SonosService {
     const group = [...this.groups.values()][0];
     if (!group) throw new Error("No reachable Sonos group");
     return group;
+  }
+
+  private async firstVisibleZone(): Promise<SonosZone> {
+    await this.snapshot();
+    const zone = [...this.zones.values()].find((candidate) => candidate.visible);
+    if (!zone) throw new Error("No reachable Sonos zone");
+    return zone;
   }
 
   private async scanTrack(sourceId: string, trackId: string | undefined): Promise<SourceTrackInfo> {
