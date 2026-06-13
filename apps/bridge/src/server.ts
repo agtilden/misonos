@@ -5,6 +5,7 @@ import type { BridgeConfig } from "./config.js";
 import { SonosEventManager } from "./sonosEvents.js";
 import { SonosService } from "./sonosService.js";
 import { proxyStream } from "./streamProxy.js";
+import { proxyArt } from "./artProxy.js";
 
 type RouteHandler = (
   request: IncomingMessage,
@@ -49,6 +50,12 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
     if (request.method === "OPTIONS") return empty(response, 204);
     if (request.method === "GET" && url.pathname === "/api/health") {
       return json(response, { ok: true, name: "misonos-bridge" });
+    }
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/api/art") {
+      const target = url.searchParams.get("u");
+      if (!target) return json(response, { error: "Missing u" }, 400);
+      await proxyArt(target, request, response);
+      return;
     }
     if (request.method === "GET" && url.pathname === "/api/events") {
       response.writeHead(200, {

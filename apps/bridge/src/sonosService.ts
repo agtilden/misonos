@@ -176,7 +176,7 @@ export class SonosService {
         title: smapiMeta?.title ?? item?.title ?? position.TrackURI ?? "Nothing playing",
         artist: smapiMeta?.artist ?? item?.artist,
         album: smapiMeta?.album ?? item?.album,
-        albumArtUri: smapiMeta?.albumArtUri ?? item?.albumArtUri ?? albumArtFromPosition(position, baseUrl),
+        albumArtUri: proxyArtUri(smapiMeta?.albumArtUri ?? item?.albumArtUri ?? albumArtFromPosition(position, baseUrl)),
         duration: usableDuration(position.TrackDuration) ?? formatDuration(smapiMeta?.durationSeconds),
         position: position.RelTime,
         playlistPosition: numericPosition(position.Track),
@@ -225,13 +225,12 @@ export class SonosService {
       // Cache-only enrichment (no per-item source fetches in a polling path).
       return items.map((item) => {
         const meta = this.smapiTrackFromCache(item.uri);
-        if (!meta) return item;
         return {
           ...item,
-          title: meta.title ?? item.title,
-          artist: meta.artist ?? item.artist,
-          album: meta.album ?? item.album,
-          albumArtUri: meta.albumArtUri ?? item.albumArtUri
+          title: meta?.title ?? item.title,
+          artist: meta?.artist ?? item.artist,
+          album: meta?.album ?? item.album,
+          albumArtUri: proxyArtUri(meta?.albumArtUri ?? item.albumArtUri)
         };
       });
     });
@@ -821,6 +820,15 @@ function albumArtFromPosition(position: Record<string, string>, baseUrl: string)
   if (!uri) return undefined;
   if (/^https?:\/\//i.test(uri)) return uri;
   return `${baseUrl}${uri.startsWith("/") ? "" : "/"}${uri}`;
+}
+
+// Rewrite an absolute art URL (often the Sonos speaker's LAN address) to a
+// same-origin bridge path so remote clients that can't reach the speaker IP
+// directly can still load it. Relative/already-proxied URLs pass through.
+function proxyArtUri(uri: string | undefined): string | undefined {
+  if (!uri) return undefined;
+  if (!/^https?:\/\//i.test(uri)) return uri;
+  return `/api/art?u=${encodeURIComponent(uri)}`;
 }
 
 function sleep(ms: number): Promise<void> {
