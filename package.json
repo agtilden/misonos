@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "npm run build -w @misonos/sonos-protocol && node scripts/dev.mjs",
+    "start": "npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/web && node scripts/start.mjs",
     "dev:web": "npm run dev -w @misonos/web",
     "dev:bridge": "npm run dev -w @misonos/bridge",
     "dev:grateful": "npm run dev -w @misonos/grateful-smapi",
