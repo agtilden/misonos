@@ -17,7 +17,7 @@ const PLAYER_SEARCH = [
   ""
 ].join("\r\n");
 
-export async function discoverSsdp(timeoutMs: number): Promise<SsdpDevice[]> {
+export async function discoverSsdp(timeoutMs: number, interfaceAddress?: string | null): Promise<SsdpDevice[]> {
   return new Promise((resolve) => {
     const socket = dgram.createSocket({ type: "udp4", reuseAddr: true });
     const devices = new Map<string, SsdpDevice>();
@@ -49,6 +49,16 @@ export async function discoverSsdp(timeoutMs: number): Promise<SsdpDevice[]> {
 
     socket.bind(() => {
       socket.setMulticastTTL(4);
+      // On a multi-homed host (e.g. with Tailscale up) the OS default multicast
+      // egress can be a utun interface where no speaker hears the M-SEARCH. Pin
+      // egress to the LAN interface when the caller knows it.
+      if (interfaceAddress) {
+        try {
+          socket.setMulticastInterface(interfaceAddress);
+        } catch {
+          // Fall back to OS default if the address isn't a valid local iface.
+        }
+      }
       const payload = Buffer.from(PLAYER_SEARCH);
       for (let attempt = 0; attempt < 3; attempt += 1) {
         socket.send(payload, 1900, "239.255.255.250");

@@ -81,6 +81,7 @@ export class SonosService {
   private lastDiscovery = 0;
   private rediscoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private rediscoveryInProgress = false;
+  private discoveryInFlight: Promise<void> | undefined;
   onSnapshot?: (snapshot: BridgeSnapshot) => void;
 
   constructor(private readonly config: BridgeConfig = loadConfig()) {}
@@ -121,6 +122,10 @@ export class SonosService {
     if (forceDiscovery || this.zones.size === 0 || Date.now() - this.lastDiscovery > 30_000) {
       await this.discover();
     }
+    return this.currentSnapshot();
+  }
+
+  private currentSnapshot(): BridgeSnapshot {
     return {
       zones: [...this.zones.values()].filter((zone) => zone.visible),
       groups: [...this.groups.values()]
@@ -128,13 +133,34 @@ export class SonosService {
   }
 
   async discover(): Promise<BridgeSnapshot> {
-    const discovered = await discoverSsdp(this.config.discoveryTimeoutMs);
+    // Collapse concurrent discoveries into a single sweep. The polling frontend
+    // can otherwise fire many overlapping discoveries whose reuseAddr SSDP
+    // sockets steal each other's multicast replies, so each sees zero devices.
+    this.discoveryInFlight ??= this.runDiscovery().finally(() => {
+      this.discoveryInFlight = undefined;
+    });
+    await this.discoveryInFlight;
+    // Build the snapshot directly — never recurse through snapshot(), which would
+    // loop forever whenever a sweep yields no zones.
+    return this.currentSnapshot();
+  }
+
+  private async runDiscovery(): Promise<void> {
+    const discovered = await discoverSsdp(this.config.discoveryTimeoutMs, this.publicHost());
     const manual = this.config.manualSpeakerIps.map((ipAddress) => ({
       ipAddress,
       location: `http://${ipAddress}:1400/xml/device_description.xml`
     }));
 
     const devices = [...manual, ...discovered];
+    // A transient blip (or a sweep that loses the multicast race) yields zero
+    // devices. Don't wipe a healthy topology over it — keep the last-known-good
+    // zones so the UI doesn't blank out, and let the next sweep recover.
+    if (devices.length === 0) {
+      this.lastDiscovery = Date.now();
+      return;
+    }
+
     const zones = await Promise.all(
       devices.map(async (device) => {
         try {
@@ -156,7 +182,6 @@ export class SonosService {
     this.zones = new Map(zones.map((zone) => [zone.uuid, zone]));
     await this.refreshTopology(zones[0]);
     this.lastDiscovery = Date.now();
-    return this.snapshot(false);
   }
 
   async nowPlaying(groupId: string): Promise<NowPlaying> {

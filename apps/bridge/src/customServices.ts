@@ -62,14 +62,33 @@ export function buildServiceUri(preset: CustomServicePreset, host: string): stri
 }
 
 export function detectLanIp(): string | null {
-  const ifaces = networkInterfaces();
-  for (const list of Object.values(ifaces)) {
+  // Skip Tailscale/VPN CGNAT (100.64.0.0/10) and link-local — Sonos speakers are
+  // on the physical LAN and can't be reached over those. Prefer a real
+  // private-LAN address; fall back to the first usable one otherwise.
+  let fallback: string | null = null;
+  for (const list of Object.values(networkInterfaces())) {
     if (!list) continue;
     for (const iface of list) {
-      if (iface.family === "IPv4" && !iface.internal) return iface.address;
+      if (iface.family !== "IPv4" || iface.internal) continue;
+      if (isCgnat(iface.address) || iface.address.startsWith("169.254.")) continue;
+      fallback ??= iface.address;
+      if (isPrivateLan(iface.address)) return iface.address;
     }
   }
-  return null;
+  return fallback;
+}
+
+function isCgnat(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+  return a === 100 && b >= 64 && b <= 127;
+}
+
+function isPrivateLan(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+  if (a === 192 && b === 168) return true;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
 }
 
 export interface RegisterCustomServiceResult {
