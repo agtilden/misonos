@@ -28,7 +28,7 @@ export class SonosEventManager {
   constructor(private readonly config: BridgeConfig) {}
 
   async ensureSnapshotSubscriptions(snapshot: BridgeSnapshot): Promise<void> {
-    await Promise.all(
+    const results = await Promise.allSettled(
       snapshot.groups.flatMap((group) => {
         const coordinator = group.zones.find((zone) => zone.uuid === group.coordinatorId);
         if (!coordinator?.ipAddress) return [];
@@ -37,6 +37,11 @@ export class SonosEventManager {
         );
       })
     );
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.warn(`[sonos-events] subscription skipped: ${errorMessage(result.reason)}`);
+      }
+    }
   }
 
   handleNotify(headers: http.IncomingHttpHeaders, body: string): SonosNotifyEvent {
@@ -101,7 +106,11 @@ export class SonosEventManager {
         clearTimeout(current.renewTimer);
         this.subscriptionsByKey.delete(key);
         this.subscriptionsBySid.delete(current.sid);
-        await this.ensureSubscription(groupId, ipAddress, serviceType);
+        try {
+          await this.ensureSubscription(groupId, ipAddress, serviceType);
+        } catch (error) {
+          console.warn(`[sonos-events] renewal failed for ${serviceType} on ${ipAddress}: ${errorMessage(error)}`);
+        }
       }
     }, delayMs);
     timer.unref();
@@ -196,6 +205,10 @@ function parseTimeoutSeconds(value: string | string[] | undefined): number {
   const raw = Array.isArray(value) ? value[0] : value;
   const match = raw?.match(/Second-(\d+)/i);
   return match ? Number.parseInt(match[1], 10) : 300;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function localAddressForSpeaker(ipAddress: string): string | undefined {
