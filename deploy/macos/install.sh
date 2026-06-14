@@ -75,19 +75,33 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# The launcher's contents are part of the app's code identity, so the granted
-# permission stays valid as long as this file does not change. Keep it minimal.
+# CRITICAL — why the main executable is a COMPILED C binary, not a shell script:
 #
-# CRITICAL: the bridge must run as the app bundle's OWN process (final `exec`,
-# no npm/tsx child). Only then does macOS attribute its Local Network access to
-# MiSonos.app and prompt to grant it. A launcher that `exec npm start` puts the
-# LAN-accessing node ~5 spawns deep, so macOS attributes it to bare `node` and
-# silently denies it with no prompt. The bridge is the ONLY process that touches
-# the LAN; the SMAPI sources + web only listen / reach the internet, so they run
-# as background children that don't need the grant.
+# macOS attributes Local Network access to the "responsible app" — the live,
+# bundle-identified process that LaunchServices started. The earlier launcher was
+# a shell script ending in `exec node …`; `exec` REPLACES the bundle process with
+# /usr/local/bin/node (a foreign-signed binary, no bundle id, no usage string), so
+# after the exec there is no live bundle process left to be responsible → macOS
+# blames bare `node`, can't prompt, and silently denies. (Confirmed: even a reboot
+# to clear stuck TCC state did NOT produce a prompt — the cause is the exec, not
+# stuck state.)
+#
+# The fix mirrors what already works — `npm start` from a granted Terminal: the
+# Terminal app stays alive as the responsible parent and the deep node child
+# inherits its grant. So the bundle's main executable is now a tiny C program that
+# STAYS RESIDENT and runs the bridge as a CHILD (never exec's away). The resident
+# C binary carries the bundle's code identity + NSLocalNetworkUsageDescription, so
+# the prompt fires for MiSonos.app and the child node inherits the grant. Spawn
+# depth is irrelevant; a live app-identity parent is what matters.
 echo "Building the bridge (dist) so the bundle can run it directly"
 ( cd "$REPO" && npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge ) >/dev/null
 
+mkdir -p "$APP/Contents/Resources"
+RUN_SH="$APP/Contents/Resources/run.sh"
+
+# run.sh runs inside the CHILD shell the resident launcher spawns — it is free to
+# `exec node` here, because that only replaces the child, not the bundle's main
+# executable (which stays alive as the Local-Network-responsible app).
 {
   echo '#!/bin/sh'
   echo "export PATH=\"$NODE_BIN_DIR:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\""
@@ -106,10 +120,43 @@ echo "Building the bridge (dist) so the bundle can run it directly"
   echo 'npm run dev -w @misonos/phish-smapi    >> "$LOG/misonos-phish.log" 2>&1 &'
   echo 'npm run dev -w @misonos/ytmusic-smapi  >> "$LOG/misonos-ytmusic.log" 2>&1 &'
   echo 'npm run preview -w @misonos/web        >> "$LOG/misonos-web.log" 2>&1 &'
-  echo '# The bridge becomes the bundle process itself (no npm/tsx child) so macOS'
-  echo '# attributes Local Network access to MiSonos.app.'
+  echo '# The bridge runs as a child of the resident C launcher (the bundle main'
+  echo '# executable), which stays alive as the Local-Network-responsible app.'
   echo 'exec node apps/bridge/dist/index.js >> "$LOG/misonos-bridge.out.log" 2>> "$LOG/misonos-bridge.err.log"'
-} > "$APP/Contents/MacOS/misonos"
+} > "$RUN_SH"
+chmod +x "$RUN_SH"
+
+# Compile the resident main executable. It posix_spawns the child shell that runs
+# the stack and waits on it, so the bundle process never exec's away.
+if ! command -v cc >/dev/null 2>&1; then
+  echo "ERROR: 'cc' (Xcode Command Line Tools) is required to build the app launcher." >&2
+  echo "       Install with: xcode-select --install" >&2
+  exit 1
+fi
+
+LAUNCHER_C="$(mktemp -t misonos-launcher).c"
+cat > "$LAUNCHER_C" <<'CSRC'
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char **environ;
+
+/* The bundle's main executable: stay resident (so macOS keeps attributing the
+ * Local Network access to THIS app) and run the stack as a child shell. */
+int main(int argc, char **argv) {
+    char *args[] = { "/bin/sh", RUN_SCRIPT, (void *)0 };
+    pid_t pid;
+    if (posix_spawn(&pid, "/bin/sh", (void *)0, (void *)0, args, environ) != 0)
+        return 1;
+    int status;
+    if (waitpid(pid, &status, 0) < 0)
+        return 1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+CSRC
+
+cc -O2 -DRUN_SCRIPT="\"$RUN_SH\"" -o "$APP/Contents/MacOS/misonos" "$LAUNCHER_C"
+rm -f "$LAUNCHER_C"
 chmod +x "$APP/Contents/MacOS/misonos"
 
 echo "Ad-hoc signing the bundle (stable identity for the permission grant)"

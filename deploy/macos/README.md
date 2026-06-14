@@ -31,6 +31,18 @@ declares `NSLocalNetworkUsageDescription`, ad-hoc signs it, and registers it as 
 hidden Login Item. Because it now has an app identity, macOS will prompt for (and
 remember) Local Network access.
 
+**The main executable must stay resident.** macOS attributes LAN access to the
+*live, bundle-identified* process LaunchServices started. An earlier version used
+a shell-script launcher that ended in `exec node …`; `exec` replaces the bundle
+process with `/usr/local/bin/node` (foreign-signed, no bundle id, no usage
+string), so there's no live bundle process left to be "responsible" → macOS blames
+bare `node` and silently denies, **with no prompt even after a reboot**. The
+installer therefore compiles a tiny C launcher (`Contents/MacOS/misonos`) that
+**stays alive** and runs the stack (`Contents/Resources/run.sh`) as a **child** —
+just like `npm start` under a granted Terminal works, because Terminal stays alive
+as the responsible parent. (Requires Xcode Command Line Tools: `xcode-select
+--install`.)
+
 ```sh
 MISONOS_BRIDGE_PUBLIC_HOST=192.168.68.64 deploy/macos/install.sh
 ```
@@ -50,8 +62,8 @@ tccutil reset LocalNetwork com.misonos.bridge
 
 ### Notes / caveats
 
-- The grant is tied to the app's code hash. The launcher script is intentionally
-  tiny and static; if you change it, re-grant (rebuild + approve again).
+- The grant is tied to the app's code hash. The C launcher is intentionally tiny
+  and static; if you change it (or `run.sh`), re-grant (rebuild + approve again).
 - **Auto-start after reboot** needs a GUI login session: enable automatic login
   (System Settings → Users & Groups; requires FileVault off). Enable **Screen
   Sharing** so future prompts can be approved without pulling the box out.
