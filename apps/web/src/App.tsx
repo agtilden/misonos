@@ -809,12 +809,12 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
     return () => window.removeEventListener("misonos:source-auth-changed", onAuthChange);
   }, [sourceId]);
 
-  // The backend can drop YouTube Music cookies on its own (a 401/403 expires them).
-  // Poll the source's auth status so an already-open browser notices and refetches,
-  // instead of serving cached "Your Library"/"Supermix" entries that now return empty.
+  // The backend can drop YouTube Music cookies on its own (a 401/403 expires them),
+  // possibly triggered from another tab/device. Poll auth status INDEPENDENTLY of the
+  // selected source so the baseline never resets and the transition is caught wherever
+  // it happens; on a drop, fire the event that evicts the (source-keyed) YT cache.
   const lastCookieAuthRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (sourceId !== "youtube-music") { lastCookieAuthRef.current = undefined; return; }
     let cancelled = false;
     const check = async () => {
       try {
@@ -822,7 +822,12 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
         if (cancelled) return;
         const prev = lastCookieAuthRef.current;
         lastCookieAuthRef.current = status.cookieAuth;
-        if (prev === "signed-in" && status.cookieAuth === "signed-out") {
+        const dropped = prev === "signed-in" && status.cookieAuth === "signed-out";
+        // First sample: if already signed-out but we still hold cached YT entries,
+        // they may be stale signed-in results from before — evict them too.
+        const staleFirstSample = prev === undefined && status.cookieAuth === "signed-out"
+          && [...browseCache.current.keys()].some((key) => key.startsWith("youtube-music:"));
+        if (dropped || staleFirstSample) {
           window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
         }
       } catch { /* transient — ignore */ }
@@ -832,7 +837,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
     const onVisible = () => { if (document.visibilityState === "visible") void check(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => { cancelled = true; window.clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
-  }, [sourceId]);
+  }, []);
 
   const [data, setData] = useState<Awaited<ReturnType<typeof bridgeApi.browseSource>> | null>(null);
   const [loading, setLoading] = useState(false);
