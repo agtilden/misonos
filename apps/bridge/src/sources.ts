@@ -26,7 +26,8 @@ const DEFAULT_SOURCES: SourceConfig[] = [
   { id: "grateful-dead-archive", baseUrl: process.env.MISONOS_GRATEFUL_URL ?? "http://127.0.0.1:4319" },
   { id: "phish-in", baseUrl: process.env.MISONOS_PHISH_URL ?? "http://127.0.0.1:4320" },
   { id: "youtube-music", baseUrl: process.env.MISONOS_YTM_URL ?? "http://127.0.0.1:4321" },
-  { id: "live-music-archive", baseUrl: process.env.MISONOS_LMA_URL ?? "http://127.0.0.1:4322" }
+  { id: "live-music-archive", baseUrl: process.env.MISONOS_LMA_URL ?? "http://127.0.0.1:4322" },
+  { id: "podcasts", baseUrl: process.env.MISONOS_PODCAST_URL ?? "http://127.0.0.1:4323" }
 ];
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -111,6 +112,20 @@ export async function sourceAuthSetCookies(sourceId: string, raw: string): Promi
 export async function sourceAuthClearCookies(sourceId: string): Promise<unknown> {
   const config = requireConfig(sourceId);
   return fetchJson<unknown>(new URL("/auth/cookies/clear", config.baseUrl), { method: "POST" });
+}
+
+export async function sourceSubscriptions(sourceId: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  return fetchJson<unknown>(new URL("/subscriptions", config.baseUrl));
+}
+
+export async function sourcePin(sourceId: string, id: string, pinned: boolean): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  return fetchJson<unknown>(new URL(pinned ? "/pin" : "/unpin", config.baseUrl), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id })
+  });
 }
 
 async function fetchInfo(config: SourceConfig): Promise<SourceDescriptor> {

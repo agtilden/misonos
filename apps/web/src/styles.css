@@ -1202,6 +1202,12 @@ h2 {
   border-color: rgba(145, 211, 196, 0.5);
 }
 
+.browse-action.pinned {
+  color: #91d3c4;
+  background: rgba(145, 211, 196, 0.16);
+  border-color: rgba(145, 211, 196, 0.5);
+}
+
 .browse-action:disabled {
   opacity: 0.5;
   cursor: not-allowed;

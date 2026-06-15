@@ -133,6 +133,9 @@ pm2 save && pm2 startup   # follow the printed command for launch-on-boot
   `~/.misonos/ytmusic.json` natively, override with `YTMUSIC_CREDENTIALS_PATH`),
   so it survives restarts.
 - **Phish.in** works without a key; set `MISONOS_PHISH_API_KEY` if you have one.
+- **Podcasts** work without a key (Apple Podcasts directory). Set
+  `PODCASTINDEX_KEY` + `PODCASTINDEX_SECRET` (free from api.podcastindex.org) for
+  richer Podcast Index search. Pinned shows persist in `podcasts.db`.
 - **A missing Grateful DB** only breaks Grateful Dead browsing; the other sources
   and the bridge keep working.
 
@@ -145,3 +148,5 @@ pm2 save && pm2 startup   # follow the printed command for launch-on-boot
 | grateful | 4319            | bridge + Sonos speakers (SMAPI)  |
 | phish    | 4320            | bridge + Sonos speakers (SMAPI)  |
 | ytmusic  | 4321            | bridge + Sonos speakers (SMAPI)  |
+| lma      | 4322            | bridge (Live Music Archive)      |
+| podcasts | 4323            | bridge (RSS podcasts)            |
