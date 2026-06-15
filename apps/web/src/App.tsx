@@ -7,6 +7,7 @@ import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
+import { SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions } from "./groupPalette.js";
 import { LAST_GROUP_PREF, LAST_SOURCE_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
@@ -976,14 +977,11 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
       <div className="browse-controls">
         <label>
           <span>Source</span>
-          <select
-            value={sourceId ?? ""}
-            onChange={(event) => { persistSourceId(event.target.value); setStack([]); clearSearch(); }}
-          >
-            {(sources ?? []).map((source) => (
-              <option key={source.id} value={source.id}>{source.name}</option>
-            ))}
-          </select>
+          <SourcePicker
+            sources={sources ?? []}
+            value={sourceId}
+            onChange={(id) => { persistSourceId(id); setStack([]); clearSearch(); }}
+          />
         </label>
         <label>
           <span>Play to group</span>

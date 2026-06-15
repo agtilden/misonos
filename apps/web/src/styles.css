@@ -682,6 +682,109 @@ h2 {
   flex-wrap: wrap;
 }
 
+.source-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.source-picker-empty {
+  color: #aeb4ad;
+  font-size: 0.88rem;
+  padding: 8px 10px;
+}
+
+.source-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(242, 240, 232, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f0e8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+}
+
+.source-picker-trigger:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.source-picker-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 70;
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  padding: 6px;
+  margin: 0;
+  background: #1f2424;
+  border: 1px solid rgba(242, 240, 232, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.source-picker-option > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #f2f0e8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.source-picker-option > button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.source-picker-option > button.selected {
+  border-color: rgba(242, 240, 232, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.service-icon {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  object-fit: cover;
+}
+
+.service-icon-glyph {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
 .browse-search-types button {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(242, 240, 232, 0.18);
