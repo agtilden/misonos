@@ -1,6 +1,6 @@
 # MiSonos UX11
 
-Modern TypeScript Sonos controller targeting fast LAN control first and Capacitor packaging later.
+Modern TypeScript Sonos controller targeting fast LAN control.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ Modern TypeScript Sonos controller targeting fast LAN control first and Capacito
 - `apps/bridge`: local Node TypeScript LAN bridge for SSDP discovery and Sonos SOAP calls.
 - `packages/sonos-protocol`: shared Sonos models plus SOAP/DIDL/XML helpers.
 
-The web app talks to the bridge through a typed HTTP/SSE API. That boundary is intended to survive the later Capacitor phase, where a native LAN transport can replace the local Node bridge.
+The web app talks to the bridge through a typed HTTP/SSE API. That boundary keeps the UI decoupled from the transport, so a native LAN transport could replace the local Node bridge without changing the web app.
 
 ## Local Development
 
