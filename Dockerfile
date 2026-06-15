@@ -14,11 +14,13 @@ COPY apps/web/package.json apps/web/
 COPY apps/grateful-smapi/package.json apps/grateful-smapi/
 COPY apps/phish-smapi/package.json apps/phish-smapi/
 COPY apps/ytmusic-smapi/package.json apps/ytmusic-smapi/
+COPY apps/lma-smapi/package.json apps/lma-smapi/
+COPY apps/podcast-smapi/package.json apps/podcast-smapi/
 RUN npm ci
 COPY . .
 RUN npm run build
 
-# ---- node-runtime: the four backend services (bridge + 3 SMAPI) ----
+# ---- node-runtime: the backend services (bridge + SMAPI sources) ----
 FROM node:22-bookworm-slim AS node-runtime
 ENV NODE_ENV=production
 WORKDIR /app

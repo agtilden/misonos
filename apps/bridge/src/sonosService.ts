@@ -4,7 +4,7 @@ import { discoverSsdp } from "./ssdp.js";
 import { callSoap, SonosSoapError, type ServiceType } from "./sonosSoap.js";
 import { fetchDeviceInfo } from "./deviceInfo.js";
 import type { PlaybackMode, SonosDeviceInfo, SourceBrowseResponse, SourceDescriptor, SourceTrackInfo } from "@misonos/sonos-protocol";
-import { browseSource, fetchTrack, listSources, searchSource, sourceAuthClearCookies, sourceAuthSetCookies, sourceAuthStart, sourceAuthSignOut, sourceAuthStatus } from "./sources.js";
+import { browseSource, fetchTrack, listSources, searchSource, sourceAuthClearCookies, sourceAuthSetCookies, sourceAuthStart, sourceAuthSignOut, sourceAuthStatus, sourcePin, sourceSubscriptions } from "./sources.js";
 import {
   buildServiceUri,
   detectLanIp,
@@ -583,6 +583,14 @@ export class SonosService {
 
   sourceAuthClearCookies(sourceId: string): Promise<unknown> {
     return sourceAuthClearCookies(sourceId);
+  }
+
+  sourceSubscriptions(sourceId: string): Promise<unknown> {
+    return sourceSubscriptions(sourceId);
+  }
+
+  sourcePin(sourceId: string, id: string, pinned: boolean): Promise<unknown> {
+    return sourcePin(sourceId, id, pinned);
   }
 
   fetchSourceTrack(sourceId: string, id: string): Promise<SourceTrackInfo> {

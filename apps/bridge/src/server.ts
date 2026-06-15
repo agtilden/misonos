@@ -310,6 +310,18 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, await service.sourceAuthClearCookies(decodeURIComponent(sourceAuthCookiesClearMatch[1])));
     }
 
+    const sourceSubsMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/subscriptions$/);
+    if (request.method === "GET" && sourceSubsMatch) {
+      return json(response, await service.sourceSubscriptions(decodeURIComponent(sourceSubsMatch[1])));
+    }
+
+    const sourcePinMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/pin$/);
+    if (request.method === "POST" && sourcePinMatch) {
+      const body = await readJson<{ id?: string; pinned?: boolean }>(request);
+      if (!body.id) return json(response, { error: "Missing id" }, 400);
+      return json(response, await service.sourcePin(decodeURIComponent(sourcePinMatch[1]), body.id, body.pinned !== false));
+    }
+
     const sourceTrackMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/track$/);
     if (request.method === "GET" && sourceTrackMatch) {
       const sourceId = decodeURIComponent(sourceTrackMatch[1]);

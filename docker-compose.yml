@@ -20,6 +20,7 @@ services:
       MISONOS_GRATEFUL_URL: "http://127.0.0.1:4319"
       MISONOS_PHISH_URL: "http://127.0.0.1:4320"
       MISONOS_YTM_URL: "http://127.0.0.1:4321"
+      MISONOS_PODCAST_URL: "http://127.0.0.1:4323"
       # Writable SQLite store (preferences, recently-viewed, EQ presets). WAL
       # sidecars (misonos.db-wal/-shm) live alongside it in ./data.
       MISONOS_BRIDGE_DB: "/data/misonos.db"
@@ -59,6 +60,23 @@ services:
       MISONOS_YTM_PORT: "4321"
       # OAuth tokens are written here so YouTube Music stays signed in across restarts.
       YTMUSIC_CREDENTIALS_PATH: "/data/ytmusic.json"
+    volumes:
+      - ./data:/data
+
+  podcasts:
+    image: misonos-node
+    command: node apps/podcast-smapi/dist/index.js
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [bridge]
+    environment:
+      MISONOS_PODCAST_PORT: "4323"
+      # Pinned shows live here (podcasts.db-wal/-shm sit alongside in ./data).
+      MISONOS_PODCAST_DB: "/data/podcasts.db"
+      # Optional: set both for Podcast Index search; otherwise falls back to the
+      # key-free Apple Podcasts directory.
+      PODCASTINDEX_KEY: "${PODCASTINDEX_KEY:-}"
+      PODCASTINDEX_SECRET: "${PODCASTINDEX_SECRET:-}"
     volumes:
       - ./data:/data
 

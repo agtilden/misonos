@@ -16,10 +16,11 @@
     "dev:phish": "npm run dev -w @misonos/phish-smapi",
     "dev:ytmusic": "npm run dev -w @misonos/ytmusic-smapi",
     "dev:lma": "npm run dev -w @misonos/lma-smapi",
-    "build": "npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge && npm run build -w @misonos/grateful-smapi && npm run build -w @misonos/phish-smapi && npm run build -w @misonos/ytmusic-smapi && npm run build -w @misonos/lma-smapi && npm run build -w @misonos/web",
-    "test": "npm run build -w @misonos/sonos-protocol && npm run test -w @misonos/sonos-protocol && npm run test -w @misonos/bridge && npm run test -w @misonos/web",
-    "typecheck": "npm run build -w @misonos/sonos-protocol && npm run typecheck -w @misonos/bridge && npm run typecheck -w @misonos/grateful-smapi && npm run typecheck -w @misonos/phish-smapi && npm run typecheck -w @misonos/ytmusic-smapi && npm run typecheck -w @misonos/lma-smapi && npm run typecheck -w @misonos/web",
-    "lint": "npm run lint -w @misonos/sonos-protocol && npm run lint -w @misonos/bridge && npm run lint -w @misonos/grateful-smapi && npm run lint -w @misonos/phish-smapi && npm run lint -w @misonos/ytmusic-smapi && npm run lint -w @misonos/lma-smapi && npm run lint -w @misonos/web"
+    "dev:podcast": "npm run dev -w @misonos/podcast-smapi",
+    "build": "npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge && npm run build -w @misonos/grateful-smapi && npm run build -w @misonos/phish-smapi && npm run build -w @misonos/ytmusic-smapi && npm run build -w @misonos/lma-smapi && npm run build -w @misonos/podcast-smapi && npm run build -w @misonos/web",
+    "test": "npm run build -w @misonos/sonos-protocol && npm run test -w @misonos/sonos-protocol && npm run test -w @misonos/bridge && npm run test -w @misonos/podcast-smapi && npm run test -w @misonos/web",
+    "typecheck": "npm run build -w @misonos/sonos-protocol && npm run typecheck -w @misonos/bridge && npm run typecheck -w @misonos/grateful-smapi && npm run typecheck -w @misonos/phish-smapi && npm run typecheck -w @misonos/ytmusic-smapi && npm run typecheck -w @misonos/lma-smapi && npm run typecheck -w @misonos/podcast-smapi && npm run typecheck -w @misonos/web",
+    "lint": "npm run lint -w @misonos/sonos-protocol && npm run lint -w @misonos/bridge && npm run lint -w @misonos/grateful-smapi && npm run lint -w @misonos/phish-smapi && npm run lint -w @misonos/ytmusic-smapi && npm run lint -w @misonos/lma-smapi && npm run lint -w @misonos/podcast-smapi && npm run lint -w @misonos/web"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",

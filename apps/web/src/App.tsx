@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -856,6 +856,40 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const activeSource = sources?.find((entry) => entry.id === sourceId);
   const supportsSearch = activeSource?.capabilities?.includes("search") ?? false;
   const supportsTypedSearch = sourceId === "youtube-music";
+  const supportsPin = activeSource?.capabilities?.includes("pin") ?? false;
+
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!sourceId || !supportsPin) { setPinnedIds(new Set()); return; }
+    let cancelled = false;
+    void bridgeApi.sourceSubscriptions(sourceId)
+      .then((result) => { if (!cancelled) setPinnedIds(new Set(result.ids)); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [sourceId, supportsPin, refreshNonce]);
+
+  const togglePin = useCallback(async (item: SourceBrowseItem) => {
+    if (!sourceId) return;
+    const pinned = pinnedIds.has(item.id);
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (pinned) next.delete(item.id); else next.add(item.id);
+      return next;
+    });
+    try {
+      await bridgeApi.pinSource(sourceId, item.id, !pinned);
+      // Pinned shows drive the root + New Episodes lists, so refetch those next time.
+      browseCache.current.delete(`${sourceId}:root`);
+      browseCache.current.delete(`${sourceId}:new`);
+    } catch {
+      // Revert on failure.
+      setPinnedIds((prev) => {
+        const next = new Set(prev);
+        if (pinned) next.add(item.id); else next.delete(item.id);
+        return next;
+      });
+    }
+  }, [sourceId, pinnedIds]);
 
   const browseGroupOptions = useMemo(() => buildGroupOptions(groups), [groups]);
 
@@ -1187,17 +1221,33 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
                 );
               }
               if (item.kind === "container") {
-                // Containers with art (albums, artists, playlists) get a thumbnail row;
-                // purely navigational tiles (Home, category folders) stay a plain button.
+                // A followable podcast show (id "show:…") always shows a thumb row with a
+                // follow toggle — even without art — so it can be (un)followed from any
+                // list. Other art-bearing containers (albums/artists/playlists) get a
+                // thumb row too; purely navigational folders (Home, New Episodes) stay a
+                // plain button.
+                const isFollowable = supportsPin && item.id.startsWith("show:");
                 return (
                   <li key={itemKey}>
-                    {item.albumArtUri ? (
+                    {item.albumArtUri || isFollowable ? (
                       <div className="browse-track">
                         <BrowseThumb src={item.albumArtUri} />
                         <button type="button" className="browse-drill-inline" onClick={() => drill(item)}>
                           <span>{item.title}</span>
                           {item.subtitle ? <small>{item.subtitle}</small> : null}
                         </button>
+                        {isFollowable ? (
+                          <button
+                            type="button"
+                            className={`browse-action${pinnedIds.has(item.id) ? " pinned" : ""}`}
+                            title={pinnedIds.has(item.id) ? "Unfollow" : "Follow"}
+                            aria-label={pinnedIds.has(item.id) ? `Unfollow ${item.title}` : `Follow ${item.title}`}
+                            aria-pressed={pinnedIds.has(item.id)}
+                            onClick={() => void togglePin(item)}
+                          >
+                            <Pin size={16} fill={pinnedIds.has(item.id) ? "currentColor" : "none"} />
+                          </button>
+                        ) : null}
                       </div>
                     ) : (
                       <button type="button" className="browse-drill" onClick={() => drill(item)}>
