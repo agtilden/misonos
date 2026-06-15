@@ -801,6 +801,32 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
     window.addEventListener("misonos:source-auth-changed", onAuthChange);
     return () => window.removeEventListener("misonos:source-auth-changed", onAuthChange);
   }, [sourceId]);
+
+  // The backend can drop YouTube Music cookies on its own (a 401/403 expires them).
+  // Poll the source's auth status so an already-open browser notices and refetches,
+  // instead of serving cached "Your Library"/"Supermix" entries that now return empty.
+  const lastCookieAuthRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (sourceId !== "youtube-music") { lastCookieAuthRef.current = undefined; return; }
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const status = await bridgeApi.sourceAuthStatus("youtube-music");
+        if (cancelled) return;
+        const prev = lastCookieAuthRef.current;
+        lastCookieAuthRef.current = status.cookieAuth;
+        if (prev === "signed-in" && status.cookieAuth === "signed-out") {
+          window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
+        }
+      } catch { /* transient — ignore */ }
+    };
+    void check();
+    const interval = window.setInterval(() => void check(), 60000);
+    const onVisible = () => { if (document.visibilityState === "visible") void check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { cancelled = true; window.clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
+  }, [sourceId]);
+
   const [data, setData] = useState<Awaited<ReturnType<typeof bridgeApi.browseSource>> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -1859,6 +1885,17 @@ function YouTubeMusicAuth() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // Re-read status when auth changes elsewhere (e.g. the browser detected the
+  // backend dropping expired cookies), so this card's label stays accurate.
+  useEffect(() => {
+    const onAuthChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceId?: string }>).detail;
+      if (!detail?.sourceId || detail.sourceId === "youtube-music") void refresh();
+    };
+    window.addEventListener("misonos:source-auth-changed", onAuthChanged);
+    return () => window.removeEventListener("misonos:source-auth-changed", onAuthChanged);
   }, [refresh]);
 
   const [polling, setPolling] = useState(false);
