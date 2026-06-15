@@ -1221,18 +1221,22 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
                 );
               }
               if (item.kind === "container") {
-                // Containers with art (albums, artists, playlists) get a thumbnail row;
-                // purely navigational tiles (Home, category folders) stay a plain button.
+                // A followable podcast show (id "show:…") always shows a thumb row with a
+                // follow toggle — even without art — so it can be (un)followed from any
+                // list. Other art-bearing containers (albums/artists/playlists) get a
+                // thumb row too; purely navigational folders (Home, New Episodes) stay a
+                // plain button.
+                const isFollowable = supportsPin && item.id.startsWith("show:");
                 return (
                   <li key={itemKey}>
-                    {item.albumArtUri ? (
+                    {item.albumArtUri || isFollowable ? (
                       <div className="browse-track">
                         <BrowseThumb src={item.albumArtUri} />
                         <button type="button" className="browse-drill-inline" onClick={() => drill(item)}>
                           <span>{item.title}</span>
                           {item.subtitle ? <small>{item.subtitle}</small> : null}
                         </button>
-                        {supportsPin ? (
+                        {isFollowable ? (
                           <button
                             type="button"
                             className={`browse-action${pinnedIds.has(item.id) ? " pinned" : ""}`}

@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import net from "node:net";
 import { XMLParser } from "fast-xml-parser";
 
 export interface PodcastEpisode {
@@ -34,11 +36,55 @@ const parser = new XMLParser({
   isArray: (name) => name === "item"
 });
 
+// SSRF guard: require http(s) and reject any URL whose host resolves to a private,
+// loopback, or link-local address (blocks forged ids targeting host/LAN services).
+async function assertPublicUrl(rawUrl: string): Promise<void> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error("Invalid feed URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Unsupported feed URL scheme");
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const addresses = net.isIP(host) ? [host] : (await lookup(host, { all: true })).map((entry) => entry.address);
+  if (addresses.length === 0) throw new Error("Feed host did not resolve");
+  for (const address of addresses) {
+    if (isPrivateAddress(address)) throw new Error("Feed host is not allowed");
+  }
+}
+
+export function isPrivateAddress(address: string): boolean {
+  if (net.isIPv4(address)) {
+    const [a, b] = address.split(".").map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;        // link-local
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    return false;
+  }
+  if (net.isIPv6(address)) {
+    const a = address.toLowerCase();
+    if (a === "::1" || a === "::") return true;
+    if (a.startsWith("fe80")) return true;          // link-local
+    if (a.startsWith("fc") || a.startsWith("fd")) return true; // unique-local fc00::/7
+    const mapped = a.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return isPrivateAddress(mapped[1]);
+    return false;
+  }
+  return true; // unknown format → reject
+}
+
 // Fetch + parse an RSS feed, caching by URL with conditional requests so repeated
 // "New Episodes" scans are cheap.
 export async function getFeed(feedUrl: string, force = false): Promise<PodcastFeed> {
   const cached = cache.get(feedUrl);
   if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.feed;
+
+  // Feed URLs arrive inside client-supplied ids, so guard against SSRF before
+  // fetching: only http(s), and never a private/loopback/link-local target.
+  await assertPublicUrl(feedUrl);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -77,7 +123,7 @@ async function readCapped(response: Response): Promise<string> {
 
 type AnyRec = Record<string, unknown>;
 
-function parseFeed(feedUrl: string, xml: string): PodcastFeed {
+export function parseFeed(feedUrl: string, xml: string): PodcastFeed {
   const root = parser.parse(xml) as AnyRec;
   const channel = (root.rss as AnyRec | undefined)?.channel as AnyRec | undefined
     ?? (root.feed as AnyRec | undefined); // tolerate Atom-ish roots
