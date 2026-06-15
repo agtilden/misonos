@@ -1,3 +1,5 @@
+import { cookieAuthHeaders } from "./cookieAuth.js";
+
 const YTM_DOMAIN = "https://music.youtube.com";
 const YTM_API_BASE = `${YTM_DOMAIN}/youtubei/v1/`;
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0";
@@ -38,7 +40,7 @@ async function getVisitorId(): Promise<string> {
   return visitorIdPromise;
 }
 
-export async function ytmPost(endpoint: string, body: AnyRec): Promise<AnyRec> {
+export async function ytmPost(endpoint: string, body: AnyRec, opts?: { authed?: boolean }): Promise<AnyRec> {
   const visitor = await getVisitorId();
   const payload = {
     ...body,
@@ -52,6 +54,9 @@ export async function ytmPost(endpoint: string, body: AnyRec): Promise<AnyRec> {
       user: { lockedSafetyMode: false }
     }
   };
+  // Attach the user's pasted cookies + SAPISIDHASH only for personalized calls
+  // (library, home, radios); public browse/search stays anonymous.
+  const authHeaders = opts?.authed ? cookieAuthHeaders() : {};
   const response = await fetch(`${YTM_API_BASE}${endpoint}?alt=json`, {
     method: "POST",
     headers: {
@@ -63,7 +68,8 @@ export async function ytmPost(endpoint: string, body: AnyRec): Promise<AnyRec> {
       "Referer": `${YTM_DOMAIN}/`,
       "X-Goog-Visitor-Id": visitor,
       "X-YouTube-Client-Name": "67",
-      "X-YouTube-Client-Version": todayClientVersion()
+      "X-YouTube-Client-Version": todayClientVersion(),
+      ...authHeaders
     },
     body: JSON.stringify(payload)
   });
@@ -74,16 +80,53 @@ export async function ytmPost(endpoint: string, body: AnyRec): Promise<AnyRec> {
   return response.json() as Promise<AnyRec>;
 }
 
-export async function browseMusic(browseId: string, params?: string): Promise<AnyRec> {
+export async function browseMusic(browseId: string, params?: string, opts?: { authed?: boolean }): Promise<AnyRec> {
   const body: AnyRec = { browseId };
   if (params) body.params = params;
-  return ytmPost("browse", body);
+  return ytmPost("browse", body, opts);
 }
 
 export async function searchMusic(query: string, params?: string): Promise<AnyRec> {
   const body: AnyRec = { query };
   if (params) body.params = params;
   return ytmPost("search", body);
+}
+
+// Enumerate a radio/auto playlist (e.g. a Supermix, id starts with "RD") via the
+// watch-next endpoint — these don't resolve through the regular VL browse path.
+export async function nextPlaylist(playlistId: string, videoId?: string): Promise<AnyRec> {
+  const body: AnyRec = { playlistId, isAudioOnly: true };
+  if (videoId) body.videoId = videoId;
+  return ytmPost("next", body, { authed: true });
+}
+
+export function panelTracks(response: unknown): ParsedItem[] {
+  const contents = nav(response, [
+    "contents", "singleColumnMusicWatchNextResultsRenderer", "tabbedRenderer",
+    "watchNextTabbedResultsRenderer", "tabs", 0, "tabRenderer", "content",
+    "musicQueueRenderer", "content", "playlistPanelRenderer", "contents"
+  ]) as unknown[] | undefined;
+  if (!Array.isArray(contents)) return [];
+  const out: ParsedItem[] = [];
+  for (const raw of contents) {
+    const r = nav(raw, ["playlistPanelVideoRenderer"]);
+    if (!r) continue;
+    const title = textRun(nav(r, ["title"]));
+    const videoId = nav(r, ["videoId"]) as string | undefined;
+    if (!title || !videoId) continue;
+    const bylineRuns = nav(r, ["shortBylineText", "runs"]) ?? nav(r, ["longBylineText", "runs"]);
+    const artist = Array.isArray(bylineRuns) && bylineRuns.length > 0 ? (bylineRuns[0] as AnyRec).text as string | undefined : undefined;
+    const durText = textRun(nav(r, ["lengthText"]));
+    out.push({
+      kind: "song",
+      title,
+      videoId,
+      artist,
+      durationSeconds: durText ? parseDuration(durText) : undefined,
+      thumbnailUrl: thumbnailFrom(r)
+    });
+  }
+  return out;
 }
 
 export interface TrackInfo {
@@ -186,7 +229,8 @@ export function parseShelfItem(item: unknown): ParsedItem | null {
 // Pick the largest thumbnail from a YTM renderer node and bump its requested size.
 function thumbnailFrom(node: unknown): string | undefined {
   const thumbs = (nav(node, ["thumbnailRenderer", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
-    ?? nav(node, ["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"])) as AnyRec[] | undefined;
+    ?? nav(node, ["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
+    ?? nav(node, ["thumbnail", "thumbnails"])) as AnyRec[] | undefined;
   if (!Array.isArray(thumbs) || thumbs.length === 0) return undefined;
   const best = thumbs[thumbs.length - 1];
   const url = typeof best.url === "string" ? best.url : undefined;
@@ -221,8 +265,10 @@ function parseTwoRow(node: unknown): ParsedItem | null {
   if (watchEndpoint) {
     const videoId = (watchEndpoint as AnyRec).videoId as string | undefined;
     const playlistId = (watchEndpoint as AnyRec).playlistId as string | undefined;
-    if (!videoId) return null;
-    return { kind: "song", title, subtitle: subtitleParts.join(" · ") || undefined, videoId, playlistId };
+    if (videoId) return { kind: "song", title, subtitle: subtitleParts.join(" · ") || undefined, videoId, playlistId };
+    // A tile that points at a playlist/radio with no track (e.g. a Supermix).
+    if (playlistId) return { kind: "playlist", title, subtitle: subtitleParts.join(" · ") || undefined, playlistId };
+    return null;
   }
   return null;
 }

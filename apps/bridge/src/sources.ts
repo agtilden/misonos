@@ -95,6 +95,21 @@ export async function sourceAuthSignOut(sourceId: string): Promise<unknown> {
   return fetchJson<unknown>(new URL("/auth/signout", config.baseUrl), { method: "POST" });
 }
 
+export async function sourceAuthSetCookies(sourceId: string, raw: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  // The source reads the body as a raw cURL/header paste, not JSON.
+  return fetchJson<unknown>(new URL("/auth/cookies", config.baseUrl), {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: raw
+  });
+}
+
+export async function sourceAuthClearCookies(sourceId: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  return fetchJson<unknown>(new URL("/auth/cookies/clear", config.baseUrl), { method: "POST" });
+}
+
 async function fetchInfo(config: SourceConfig): Promise<SourceDescriptor> {
   const cached = infoCache.get(config.id);
   if (cached) return cached;

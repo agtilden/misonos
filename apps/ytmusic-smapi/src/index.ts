@@ -1,7 +1,9 @@
 import { loadConfig } from "./config.js";
 import { createServer } from "./server.js";
+import { restoreCookies } from "./cookieAuth.js";
 
 const config = loadConfig();
+void restoreCookies();
 const server = createServer(config);
 
 server.listen(config.port, config.host, () => {

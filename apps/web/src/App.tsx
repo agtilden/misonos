@@ -1763,10 +1763,44 @@ function swGenLabel(value: string | undefined): string | undefined {
 }
 
 function YouTubeMusicAuth() {
-  type Status = { state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number };
+  type Status = { state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number; cookieAuth?: "signed-in" | "signed-out" };
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [paste, setPaste] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
+
+  const cookieSignedIn = status?.cookieAuth === "signed-in";
+
+  const saveCookies = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await bridgeApi.sourceAuthSetCookies("youtube-music", paste);
+      setStatus((current) => ({ ...(current ?? { state: "signed-out" }), ...next }));
+      setPaste("");
+      setShowPaste(false);
+      window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save cookies");
+    } finally {
+      setBusy(false);
+    }
+  }, [paste]);
+
+  const clearCookies = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await bridgeApi.sourceAuthClearCookies("youtube-music");
+      setStatus((current) => ({ ...(current ?? { state: "signed-out" }), ...next }));
+      window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't clear cookies");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -1841,6 +1875,41 @@ function YouTubeMusicAuth() {
         <div className="settings-card-row">
           <span>Not signed in. Anonymous search works without sign-in.</span>
           <button type="button" disabled={busy} onClick={() => void start()}>Sign in with Google</button>
+        </div>
+      )}
+
+      <div className="settings-card-divider" />
+      <h4 className="settings-card-subhead">Library &amp; Supermix (cookies)</h4>
+      <p className="settings-card-help">
+        Your Library and My Supermix need your YouTube&nbsp;Music cookies. On a computer, open{" "}
+        <a href="https://music.youtube.com" target="_blank" rel="noreferrer">music.youtube.com</a> (signed in) →
+        DevTools → <strong>Network</strong> → click any <code>/browse</code> request → right-click →
+        <strong> Copy → Copy as cURL</strong>, then paste it below.
+      </p>
+      {cookieSignedIn ? (
+        <div className="settings-card-row">
+          <span>Library connected.</span>
+          <button type="button" disabled={busy} onClick={() => void clearCookies()}>Disconnect</button>
+        </div>
+      ) : showPaste ? (
+        <div className="settings-card-row settings-card-column">
+          <textarea
+            className="settings-card-textarea"
+            value={paste}
+            disabled={busy}
+            placeholder="Paste the full 'Copy as cURL' here…"
+            onChange={(event) => setPaste(event.target.value)}
+            rows={4}
+          />
+          <div className="settings-card-row">
+            <button type="button" disabled={busy || !paste.trim()} onClick={() => void saveCookies()}>Save cookies</button>
+            <button type="button" className="secondary" disabled={busy} onClick={() => { setShowPaste(false); setPaste(""); }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="settings-card-row">
+          <span>Library not connected.</span>
+          <button type="button" disabled={busy} onClick={() => setShowPaste(true)}>Paste cookies</button>
         </div>
       )}
     </section>

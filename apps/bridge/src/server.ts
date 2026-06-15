@@ -298,6 +298,18 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, await service.sourceAuthSignOut(decodeURIComponent(sourceAuthSignOutMatch[1])));
     }
 
+    const sourceAuthCookiesMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/cookies$/);
+    if (request.method === "POST" && sourceAuthCookiesMatch) {
+      const body = await readJson<{ paste?: string }>(request);
+      if (!body.paste?.trim()) return json(response, { error: "Missing paste" }, 400);
+      return json(response, await service.sourceAuthSetCookies(decodeURIComponent(sourceAuthCookiesMatch[1]), body.paste));
+    }
+
+    const sourceAuthCookiesClearMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/cookies\/clear$/);
+    if (request.method === "POST" && sourceAuthCookiesClearMatch) {
+      return json(response, await service.sourceAuthClearCookies(decodeURIComponent(sourceAuthCookiesClearMatch[1])));
+    }
+
     const sourceTrackMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/track$/);
     if (request.method === "GET" && sourceTrackMatch) {
       const sourceId = decodeURIComponent(sourceTrackMatch[1]);

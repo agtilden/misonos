@@ -424,6 +424,31 @@ h2 {
   border-radius: 6px;
 }
 
+.settings-card-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: rgba(242, 240, 232, 0.14);
+}
+
+.settings-card-subhead {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.settings-card-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(242, 240, 232, 0.18);
+  border-radius: 6px;
+  color: #f2f0e8;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.78rem;
+  resize: vertical;
+}
+
 .settings-card button {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(242, 240, 232, 0.18);
