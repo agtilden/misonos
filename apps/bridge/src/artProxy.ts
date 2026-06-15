@@ -1,65 +1,199 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import type http from "node:http";
-import { Readable } from "node:stream";
+import path from "node:path";
+import { resolveItunesArt } from "./itunes.js";
 
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
-const RESPONSE_HEADERS_PASSTHROUGH = new Set([
-  "content-type",
-  "content-length",
-  "cache-control",
-  "etag",
-  "last-modified"
-]);
+const MEMORY_CACHE_MAX = 256;
+const DISK_CACHE_MAX_BYTES = 200 * 1024 * 1024;
+const EVICT_EVERY = 50;
+const FETCH_TIMEOUT_MS = 8000;
+// `/api/art?u=` accepts arbitrary URLs, so cap a single upstream response well below
+// the disk-cache ceiling — abort once exceeded so a huge "image" can't spike memory.
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
-// Fetch album art (typically hosted on a Sonos speaker's LAN address) and pipe
-// it back through the bridge so any client that can reach the bridge can load
-// it — without needing direct LAN access to the speaker.
-export async function proxyArt(target: string, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+interface CachedArt { buf: Buffer; contentType: string }
+const memoryCache = new Map<string, CachedArt>();
+let writeCounter = 0;
+
+// Serve album art for a `/api/art` request. Accepts either a direct `u=<url>` or a
+// resolve descriptor (`artist`, `album`, `fallback`). Resolved bytes are cached on disk
+// (survives restart) and in a hot in-memory layer, so iTunes/upstream is hit at most once.
+export async function serveArt(
+  query: URLSearchParams,
+  request: http.IncomingMessage,
+  response: http.ServerResponse,
+  cacheDir: string
+): Promise<void> {
+  const key = cacheKey(query);
+  const isHead = request.method === "HEAD";
+
+  // 1. In-memory hot cache.
+  const hot = memoryCache.get(key);
+  if (hot) return send(response, hot, isHead, "hit-memory");
+
+  // 2. Disk cache.
+  const diskPath = path.join(cacheDir, key);
+  const fromDisk = await readDisk(diskPath);
+  if (fromDisk) {
+    rememberMemory(key, fromDisk);
+    return send(response, fromDisk, isHead, "hit-disk");
+  }
+
+  // 3. Resolve a target URL and fetch the bytes.
+  const fallback = query.get("fallback") ?? undefined;
+  const target = await resolveTarget(query, fallback);
+  if (!target) return fail(response, 404, "No art available");
+
+  let art = await fetchImage(target);
+  if (!art && fallback && fallback !== target) art = await fetchImage(fallback);
+  if (!art) return fail(response, 502, "Art fetch failed");
+
+  rememberMemory(key, art);
+  void writeDisk(cacheDir, diskPath, art);
+  return send(response, art, isHead, "miss");
+}
+
+async function resolveTarget(query: URLSearchParams, fallback: string | undefined): Promise<string | undefined> {
+  const direct = query.get("u");
+  if (direct) return direct;
+  const itunes = await resolveItunesArt(query.get("artist") ?? undefined, query.get("album") ?? undefined);
+  return itunes ?? fallback;
+}
+
+async function fetchImage(target: string): Promise<CachedArt | undefined> {
   let url: URL;
   try {
     url = new URL(target);
   } catch {
-    return fail(response, 400, "Invalid art url");
+    return undefined;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return fail(response, 400, "Unsupported art url");
-  }
-
-  const isHead = request.method === "HEAD";
-  let upstream: Response;
+  if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    upstream = await fetch(url, {
-      method: isHead ? "HEAD" : "GET",
+    const upstream = await fetch(url, {
       headers: { accept: "image/*,*/*", "user-agent": BROWSER_USER_AGENT },
-      redirect: "follow"
+      redirect: "follow",
+      signal: controller.signal
     });
-  } catch (error) {
-    return fail(response, 502, error instanceof Error ? error.message : "Art fetch failed");
+    if (!upstream.ok) return undefined;
+    // Reject oversized responses up front when the server declares a length…
+    const declared = Number(upstream.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_IMAGE_BYTES) {
+      controller.abort();
+      return undefined;
+    }
+    // …and enforce the cap while streaming, in case Content-Length is absent or lies.
+    const buf = await readCapped(upstream, controller);
+    if (!buf || buf.length === 0) return undefined;
+    const contentType = upstream.headers.get("content-type")?.split(";")[0] || detectImageType(buf);
+    if (!contentType.startsWith("image/")) return undefined;
+    return { buf, contentType };
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
   }
+}
 
-  const downstreamHeaders: Record<string, string> = {
+// Stream the response body, aborting as soon as it exceeds the per-image cap so an
+// unbounded upstream can never be fully buffered into memory.
+async function readCapped(upstream: Response, controller: AbortController): Promise<Buffer | undefined> {
+  if (!upstream.body) {
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    return buf.length > MAX_IMAGE_BYTES ? undefined : buf;
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.length;
+      if (total > MAX_IMAGE_BYTES) {
+        controller.abort();
+        return undefined;
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+  } catch {
+    return undefined;
+  }
+  return Buffer.concat(chunks);
+}
+
+function send(response: http.ServerResponse, art: CachedArt, isHead: boolean, cacheState: string): void {
+  response.writeHead(200, {
+    "Content-Type": art.contentType,
+    "Content-Length": art.buf.length,
+    "Cache-Control": "public, max-age=86400",
     "Access-Control-Allow-Origin": "*",
-    "Cache-Control": "public, max-age=86400"
-  };
-  for (const [key, value] of upstream.headers.entries()) {
-    if (RESPONSE_HEADERS_PASSTHROUGH.has(key.toLowerCase())) downstreamHeaders[normalizeHeader(key)] = value;
-  }
-
-  response.writeHead(upstream.status, downstreamHeaders);
-  if (isHead || !upstream.body) {
-    response.end();
-    return;
-  }
-
-  const nodeStream = Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]);
-  nodeStream.on("error", () => {
-    if (!response.writableEnded) response.end();
+    "X-Art-Cache": cacheState
   });
-  const cleanup = () => {
-    if (!nodeStream.destroyed) nodeStream.destroy();
-  };
-  request.on("close", cleanup);
-  response.on("close", cleanup);
-  nodeStream.pipe(response);
+  response.end(isHead ? undefined : art.buf);
+}
+
+function cacheKey(query: URLSearchParams): string {
+  const parts = [...query.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`);
+  return createHash("sha1").update(parts.join("&")).digest("hex");
+}
+
+function rememberMemory(key: string, art: CachedArt): void {
+  memoryCache.delete(key);
+  memoryCache.set(key, art);
+  if (memoryCache.size > MEMORY_CACHE_MAX) {
+    const oldest = memoryCache.keys().next().value;
+    if (oldest !== undefined) memoryCache.delete(oldest);
+  }
+}
+
+async function readDisk(diskPath: string): Promise<CachedArt | undefined> {
+  try {
+    const buf = await readFile(diskPath);
+    return { buf, contentType: detectImageType(buf) };
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeDisk(cacheDir: string, diskPath: string, art: CachedArt): Promise<void> {
+  try {
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(diskPath, art.buf);
+    if (++writeCounter % EVICT_EVERY === 0) await evictIfNeeded(cacheDir);
+  } catch {
+    /* cache write failures are non-fatal */
+  }
+}
+
+async function evictIfNeeded(cacheDir: string): Promise<void> {
+  try {
+    const names = await readdir(cacheDir);
+    const files = await Promise.all(names.map(async (name) => {
+      const full = path.join(cacheDir, name);
+      const info = await stat(full).catch(() => null);
+      return info ? { full, size: info.size, mtime: info.mtimeMs } : null;
+    }));
+    const present = files.filter((f): f is { full: string; size: number; mtime: number } => f !== null);
+    let total = present.reduce((sum, f) => sum + f.size, 0);
+    if (total <= DISK_CACHE_MAX_BYTES) return;
+    present.sort((a, b) => a.mtime - b.mtime); // oldest first
+    for (const file of present) {
+      if (total <= DISK_CACHE_MAX_BYTES) break;
+      await unlink(file.full).catch(() => undefined);
+      total -= file.size;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function detectImageType(buf: Buffer): string {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf.length >= 3 && buf.toString("ascii", 0, 3) === "GIF") return "image/gif";
+  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return "image/jpeg";
 }
 
 function fail(response: http.ServerResponse, status: number, message: string): void {
@@ -67,11 +201,4 @@ function fail(response: http.ServerResponse, status: number, message: string): v
   const body = JSON.stringify({ error: message });
   response.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
   response.end(body);
-}
-
-function normalizeHeader(name: string): string {
-  return name
-    .split("-")
-    .map((part) => (part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : part))
-    .join("-");
 }

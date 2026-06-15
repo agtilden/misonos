@@ -100,6 +100,11 @@ export interface BrowseItem {
   artist?: string;
   durationSeconds?: number;
   mimeType?: string;
+  albumArtUri?: string;
+}
+
+export function archiveThumbUrl(itemId: string): string {
+  return `https://archive.org/download/${encodeURIComponent(itemId)}/__ia_thumb.jpg`;
 }
 
 export function browse(id: GratefulId, ctx: SmapiContext): { total: number; items: BrowseItem[] } {
@@ -163,7 +168,9 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       return listed(recordings.map((row) => ({
         id: encodeId({ kind: "recording", recordingId: row.id }),
         title: row.title,
-        type: "album" as const
+        type: "album" as const,
+        artist: "Grateful Dead",
+        albumArtUri: archiveThumbUrl(row.id)
       })));
     }
     case "recording": {
@@ -176,7 +183,8 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
         album: concertLabel(row.date, row.venueTitle),
         artist: "Grateful Dead",
         durationSeconds: trackDurationSeconds(row.duration),
-        mimeType: "audio/mpeg"
+        mimeType: "audio/mpeg",
+        albumArtUri: archiveThumbUrl(row.recordingId)
       })));
     }
     case "track":

@@ -3,7 +3,7 @@ import type { SmapiConfig } from "./config.js";
 import { resolveMp3Url } from "./archive.js";
 import { GratefulDb, trackDurationSeconds, trackUrl } from "./db.js";
 import { decodeId, encodeId } from "./ids.js";
-import { browse, dispatch, type BrowseItem } from "./smapi.js";
+import { archiveThumbUrl, browse, dispatch, type BrowseItem } from "./smapi.js";
 import { parseSoapRequest, soapFault } from "./soap.js";
 
 export function createServer(config: SmapiConfig): http.Server {
@@ -58,7 +58,8 @@ export function createServer(config: SmapiConfig): http.Server {
             album: track.date ? `${track.date} — ${track.venueTitle ?? "Unknown venue"}` : track.venueTitle,
             durationSeconds: trackDurationSeconds(track.duration),
             url: playUrl,
-            mimeType: "audio/mpeg"
+            mimeType: "audio/mpeg",
+            albumArtUri: archiveThumbUrl(track.recordingId)
           });
         } catch (error) {
           return sendJson(response, 400, { error: error instanceof Error ? error.message : "Bad id" });
@@ -130,7 +131,7 @@ function sendJson(response: http.ServerResponse, status: number, payload: unknow
   response.end(body);
 }
 
-function toSourceItem(item: BrowseItem): { id: string; title: string; kind: "container" | "album" | "playable"; subtitle?: string; artist?: string; album?: string; durationSeconds?: number } {
+function toSourceItem(item: BrowseItem): { id: string; title: string; kind: "container" | "album" | "playable"; subtitle?: string; artist?: string; album?: string; durationSeconds?: number; albumArtUri?: string } {
   return {
     id: item.id,
     title: item.title,
@@ -138,6 +139,7 @@ function toSourceItem(item: BrowseItem): { id: string; title: string; kind: "con
     subtitle: item.album,
     artist: item.artist,
     album: item.album,
-    durationSeconds: item.durationSeconds
+    durationSeconds: item.durationSeconds,
+    albumArtUri: item.albumArtUri
   };
 }

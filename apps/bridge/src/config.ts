@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import path from "node:path";
+
 export interface BridgeConfig {
   host: string;
   port: number;
@@ -5,6 +8,7 @@ export interface BridgeConfig {
   discoveryTimeoutMs: number;
   pollIntervalMs: number;
   manualSpeakerIps: string[];
+  dbPath: string;
 }
 
 export function loadConfig(env = process.env): BridgeConfig {
@@ -17,6 +21,7 @@ export function loadConfig(env = process.env): BridgeConfig {
     manualSpeakerIps: (env.MISONOS_SPEAKER_IPS ?? "")
       .split(",")
       .map((value) => value.trim())
-      .filter(Boolean)
+      .filter(Boolean),
+    dbPath: env.MISONOS_BRIDGE_DB ?? path.join(homedir(), ".misonos", "misonos.db")
   };
 }

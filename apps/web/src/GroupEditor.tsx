@@ -13,10 +13,12 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, SlidersHorizontal, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { SonosGroup } from "@misonos/sonos-protocol";
-import { paletteForMembers } from "./groupPalette.js";
+import type { EqPayload, EqPresetValues, SonosGroup } from "@misonos/sonos-protocol";
+import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
+import { bridgeApi } from "./api.js";
+import { assignGroupPalettes, paletteForGroup } from "./groupPalette.js";
 
 interface GroupEditorProps {
   groups: SonosGroup[];
@@ -181,23 +183,39 @@ export function GroupEditor(props: GroupEditorProps) {
 }
 
 function GroupContainerNode({ data }: NodeProps<EditorNode>) {
+  const ctx = useContext(PickedZoneContext);
   if (data.kind !== "group") return null;
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: 8,
-        left: 14,
-        color: data.color,
-        fontSize: 12,
-        fontWeight: 700,
-        letterSpacing: 0.6,
-        textTransform: "uppercase",
-        pointerEvents: "none"
-      }}
-    >
-      {data.label}
-    </div>
+    <>
+      <div
+        style={{
+          position: "absolute",
+          top: 8,
+          left: 14,
+          color: data.color,
+          fontSize: 12,
+          fontWeight: 700,
+          letterSpacing: 0.6,
+          textTransform: "uppercase",
+          pointerEvents: "none"
+        }}
+      >
+        {data.label}
+      </div>
+      {ctx ? (
+        <button
+          type="button"
+          className="group-eq-button"
+          title="Equalizer for this group"
+          aria-label={`Equalizer for ${data.label}`}
+          style={{ borderColor: data.color, color: data.color }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => { event.stopPropagation(); ctx.openEq(data.groupId); }}
+        >
+          <SlidersHorizontal size={15} />
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -210,6 +228,7 @@ interface MenuState {
 const PickedZoneContext = createContext<{
   pickedZoneId: string | null;
   openMenu: (state: MenuState) => void;
+  openEq: (groupId: string) => void;
   suppressClickRef: { current: boolean };
 } | null>(null);
 
@@ -300,6 +319,7 @@ function ZoneActionMenu({ state, groups, onClose, onPromote, onMove, onSplit }: 
   const otherGroups = groups.filter((group) => group.id !== sourceGroup!.id && !isOptimisticGroupId(group.id));
   const canPromote = !isCoordinator && visibleSource.length > 1;
   const canSplit = visibleSource.length > 1;
+  const palettes = assignGroupPalettes(groups);
 
   return (
     <>
@@ -314,7 +334,7 @@ function ZoneActionMenu({ state, groups, onClose, onPromote, onMove, onSplit }: 
         {otherGroups.length > 0 ? <div className="action-menu-header">Move to</div> : null}
         {otherGroups.map((group) => {
           const visible = group.zones.filter((zone) => zone.visible);
-          const { color, name } = paletteForMembers(visible.map((zone) => zone.uuid));
+          const { color, name } = palettes.get(group.coordinatorId) ?? paletteForGroup(group.coordinatorId);
           const roomList = visible.map((zone) => zone.name).join(", ") || "empty";
           return (
             <button
@@ -357,12 +377,15 @@ function GroupFlow({ groups, selectedGroupId, onSelectGroup, onJoinZoneGroup, on
 
   const [pickedZone, setPickedZone] = useState<{ zoneId: string; groupId: string; label: string } | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [eqGroupId, setEqGroupId] = useState<string | null>(null);
   const suppressClickRef = useRef(false);
   const openMenu = useCallback((state: MenuState) => setMenu(state), []);
+  const openEq = useCallback((groupId: string) => setEqGroupId(groupId), []);
   const pickedContext = useMemo(
-    () => ({ pickedZoneId: pickedZone?.zoneId ?? null, openMenu, suppressClickRef }),
-    [pickedZone, openMenu]
+    () => ({ pickedZoneId: pickedZone?.zoneId ?? null, openMenu, openEq, suppressClickRef }),
+    [pickedZone, openMenu, openEq]
   );
+  const eqGroup = eqGroupId ? groups.find((group) => group.id === eqGroupId) ?? null : null;
 
   const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: FALLBACK_CANVAS_WIDTH, h: FALLBACK_CANVAS_HEIGHT });
 
@@ -544,7 +567,131 @@ function GroupFlow({ groups, selectedGroupId, onSelectGroup, onJoinZoneGroup, on
         onSplit={(zoneId) => callbacksRef.current.onUngroupZone(zoneId)}
       />
     ) : null}
+    {eqGroup ? (
+      <GroupEqModal
+        group={eqGroup}
+        color={(assignGroupPalettes(groups).get(eqGroup.coordinatorId) ?? paletteForGroup(eqGroup.coordinatorId)).color}
+        onClose={() => setEqGroupId(null)}
+      />
+    ) : null}
     </PickedZoneContext.Provider>
+  );
+}
+
+function GroupEqModal({ group, color, onClose }: { group: SonosGroup; color: string; onClose: () => void }) {
+  const rooms = useMemo(() => group.zones.filter((zone) => zone.visible), [group]);
+  const coordinator = useMemo(() => rooms.find((zone) => zone.uuid === group.coordinatorId) ?? rooms[0], [rooms, group.coordinatorId]);
+  const [bass, setBass] = useState(0);
+  const [treble, setTreble] = useState(0);
+  const [loudness, setLoudness] = useState(false);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (!coordinator) { setError("This group has no rooms."); setState("error"); return; }
+      try {
+        // Seed from the coordinator; the modal then writes the same values to every room.
+        const eq = await bridgeApi.zoneEq(coordinator.id);
+        if (cancelled) return;
+        setBass(eq.bass);
+        setTreble(eq.treble);
+        setLoudness(eq.loudness);
+        setState("ready");
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load EQ");
+        setState("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [coordinator]);
+
+  const applyAll = useCallback(async (payload: EqPayload) => {
+    setBusy(true);
+    setError("");
+    try {
+      await Promise.all(rooms.map((room) => bridgeApi.setZoneEq(room.id, payload)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to apply EQ");
+    } finally {
+      setBusy(false);
+    }
+  }, [rooms]);
+
+  const applyPreset = (preset: EqPresetValues) => {
+    setBass(preset.bass);
+    setTreble(preset.treble);
+    setLoudness(preset.loudness);
+    void applyAll({ bass: preset.bass, treble: preset.treble, loudness: preset.loudness });
+  };
+
+  const roomLabel = rooms.length === 1 ? rooms[0].name : `all ${rooms.length} rooms`;
+
+  return (
+    <div className="eq-modal-backdrop" role="presentation" onClick={onClose}>
+      <div className="eq-modal" role="dialog" aria-modal="true" aria-label={`Equalizer for ${group.coordinatorName} group`} onClick={(event) => event.stopPropagation()}>
+        <div className="section-heading">
+          <h2 className="eq-modal-title">
+            <span className="group-color-chip" style={{ background: color }} aria-hidden="true" />
+            {group.coordinatorName} EQ
+          </h2>
+          <button type="button" className="icon-button compact" aria-label="Close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <p className="eq-modal-sub">Applies to {roomLabel}{rooms.length > 1 ? `: ${rooms.map((room) => room.name).join(", ")}` : ""}</p>
+        {state === "error" ? (
+          <div className="empty-panel error-panel"><span>{error}</span></div>
+        ) : state === "loading" ? (
+          <div className="empty-panel">Loading…</div>
+        ) : (
+          <div className="eq-panel">
+            <div className="eq-slider">
+              <span className="eq-slider-label">Bass</span>
+              <input
+                aria-label="Bass" type="range" min="-10" max="10" step="1" value={bass} disabled={busy}
+                onChange={(event) => setBass(Number.parseInt(event.currentTarget.value, 10))}
+                onPointerUp={(event) => void applyAll({ bass: Number.parseInt(event.currentTarget.value, 10) })}
+                onKeyUp={(event) => void applyAll({ bass: Number.parseInt(event.currentTarget.value, 10) })}
+              />
+              <output>{bass > 0 ? `+${bass}` : bass}</output>
+            </div>
+            <div className="eq-slider">
+              <span className="eq-slider-label">Treble</span>
+              <input
+                aria-label="Treble" type="range" min="-10" max="10" step="1" value={treble} disabled={busy}
+                onChange={(event) => setTreble(Number.parseInt(event.currentTarget.value, 10))}
+                onPointerUp={(event) => void applyAll({ treble: Number.parseInt(event.currentTarget.value, 10) })}
+                onKeyUp={(event) => void applyAll({ treble: Number.parseInt(event.currentTarget.value, 10) })}
+              />
+              <output>{treble > 0 ? `+${treble}` : treble}</output>
+            </div>
+            <label className="pref-row">
+              <span className="pref-label">
+                <strong>Loudness</strong>
+                <small>Boost bass &amp; treble at low volume.</small>
+              </span>
+              <input
+                type="checkbox" role="switch" checked={loudness} disabled={busy}
+                onChange={(event) => { setLoudness(event.target.checked); void applyAll({ loudness: event.target.checked }); }}
+              />
+            </label>
+            <div className="eq-presets">
+              <span className="eq-presets-label">Presets</span>
+              <div className="eq-chip-row">
+                {BUILT_IN_EQ_PRESETS.map((preset) => (
+                  <button key={preset.name} type="button" className="eq-chip" disabled={busy} onClick={() => applyPreset(preset)}>
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {error ? <div className="empty-panel error-panel"><span>{error}</span></div> : null}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -558,6 +705,7 @@ function buildLayout(
     group.zones.filter((zone) => zone.visible).slice().sort((a, b) => a.uuid.localeCompare(b.uuid))
   );
   const memberKeys = visibleZonesByGroup.map(membershipKey);
+  const palettes = assignGroupPalettes(groups);
 
   const liveKeys = new Set(memberKeys);
   for (const key of Array.from(slots.keys())) {
@@ -582,7 +730,7 @@ function buildLayout(
   order.forEach((index, orderIndex) => {
     const group = groups[index];
     const visibleZones = visibleZonesByGroup[index];
-    const { color, name } = paletteForMembers(visibleZones.map((zone) => zone.uuid));
+    const { color, name } = palettes.get(group.coordinatorId) ?? paletteForGroup(group.coordinatorId);
     const isSelected = group.id === selectedGroupId;
     const rect = rects[orderIndex];
     const { zones } = fitZonesInGroup(visibleZones.length, rect);

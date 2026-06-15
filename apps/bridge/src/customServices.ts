@@ -35,6 +35,15 @@ export const CUSTOM_SERVICE_PRESETS: CustomServicePreset[] = [
     authType: "Anonymous",
     pollInterval: 3600,
     containerType: "MService"
+  },
+  {
+    id: "live-music-archive",
+    name: "Live Music Archive",
+    description: "Thousands of taper-friendly bands from archive.org's etree collection, served by the bundled lma-smapi process.",
+    port: 4322,
+    authType: "Anonymous",
+    pollInterval: 3600,
+    containerType: "MService"
   }
 ];
 

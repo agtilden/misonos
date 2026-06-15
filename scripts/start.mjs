@@ -8,6 +8,7 @@ const commands = [
   ["npm", ["run", "dev", "-w", "@misonos/grateful-smapi"]],
   ["npm", ["run", "dev", "-w", "@misonos/phish-smapi"]],
   ["npm", ["run", "dev", "-w", "@misonos/ytmusic-smapi"]],
+  ["npm", ["run", "dev", "-w", "@misonos/lma-smapi"]],
   ["npm", ["run", "preview", "-w", "@misonos/web"]]
 ];
 

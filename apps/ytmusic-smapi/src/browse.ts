@@ -83,14 +83,14 @@ function shelvesAsItems(shelves: ParsedShelf[]): SourceBrowseItem[] {
 function toSourceItem(item: ParsedItem, shelfTitle: string | undefined): SourceBrowseItem | null {
   const subtitle = item.subtitle ?? shelfTitle;
   if (item.kind === "artist" && item.browseId) {
-    return container(encodeId({ kind: "artist", channelId: item.browseId }), item.title, subtitle);
+    return container(encodeId({ kind: "artist", channelId: item.browseId }), item.title, subtitle, item.thumbnailUrl);
   }
   if (item.kind === "album" && item.browseId) {
-    return container(encodeId({ kind: "album", browseId: item.browseId }), item.title, subtitle);
+    return container(encodeId({ kind: "album", browseId: item.browseId }), item.title, subtitle, item.thumbnailUrl);
   }
   if (item.kind === "playlist" && item.browseId) {
     const playlistId = item.browseId.startsWith("VL") ? item.browseId.slice(2) : item.browseId;
-    return container(encodeId({ kind: "playlist", playlistId }), item.title, subtitle);
+    return container(encodeId({ kind: "playlist", playlistId }), item.title, subtitle, item.thumbnailUrl);
   }
   if (item.kind === "song" && item.videoId) {
     return {
@@ -100,7 +100,8 @@ function toSourceItem(item: ParsedItem, shelfTitle: string | undefined): SourceB
       subtitle,
       artist: item.artist,
       album: item.album,
-      durationSeconds: item.durationSeconds
+      durationSeconds: item.durationSeconds,
+      albumArtUri: item.thumbnailUrl
     };
   }
   return null;
@@ -210,8 +211,8 @@ async function playlistTracks(playlistId: string): Promise<SourceBrowseItem[]> {
   }
 }
 
-function container(id: string, title: string, subtitle?: string): SourceBrowseItem {
-  return { id, title, kind: "container", subtitle };
+function container(id: string, title: string, subtitle?: string, albumArtUri?: string): SourceBrowseItem {
+  return { id, title, kind: "container", subtitle, albumArtUri };
 }
 
 // Re-imported helpers because TS otherwise treats them as unused in this module.

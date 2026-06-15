@@ -29,6 +29,9 @@ export default defineConfig({
         // Never let the SW intercept bridge calls — SSE (/api/events) and dynamic
         // endpoints must always hit the network.
         navigateFallbackDenylist: [/^\/api\//],
+        // Quiet the verbose dev-mode console logging ("No route found" / "Precaching
+        // did not find a match") that fired for every uncached bridge call.
+        disableDevLogs: true,
         runtimeCaching: [
           {
             // Album art is keyed by the encoded upstream URL, so it's safe to cache.
@@ -39,6 +42,13 @@ export default defineConfig({
               expiration: { maxEntries: 200, maxAgeSeconds: 7 * 24 * 60 * 60 },
               cacheableResponse: { statuses: [0, 200] }
             }
+          },
+          {
+            // Every other bridge call always hits the network and is never cached.
+            // A registered route stops workbox falling through to "No route found".
+            // The SSE stream is left to bypass the SW entirely.
+            urlPattern: ({ url }) => url.pathname.startsWith("/api/") && url.pathname !== "/api/events",
+            handler: "NetworkOnly"
           }
         ]
       }
