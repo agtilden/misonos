@@ -1114,12 +1114,24 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
                 );
               }
               if (item.kind === "container") {
+                // Containers with art (albums, artists, playlists) get a thumbnail row;
+                // purely navigational tiles (Home, category folders) stay a plain button.
                 return (
                   <li key={itemKey}>
-                    <button type="button" className="browse-drill" onClick={() => drill(item)}>
-                      <span>{item.title}</span>
-                      {item.subtitle ? <small>{item.subtitle}</small> : null}
-                    </button>
+                    {item.albumArtUri ? (
+                      <div className="browse-track">
+                        <BrowseThumb src={item.albumArtUri} />
+                        <button type="button" className="browse-drill-inline" onClick={() => drill(item)}>
+                          <span>{item.title}</span>
+                          {item.subtitle ? <small>{item.subtitle}</small> : null}
+                        </button>
+                      </div>
+                    ) : (
+                      <button type="button" className="browse-drill" onClick={() => drill(item)}>
+                        <span>{item.title}</span>
+                        {item.subtitle ? <small>{item.subtitle}</small> : null}
+                      </button>
+                    )}
                   </li>
                 );
               }

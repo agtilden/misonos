@@ -230,6 +230,7 @@ export function parseShelfItem(item: unknown): ParsedItem | null {
 function thumbnailFrom(node: unknown): string | undefined {
   const thumbs = (nav(node, ["thumbnailRenderer", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
     ?? nav(node, ["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
+    ?? nav(node, ["thumbnail", "croppedSquareThumbnailRenderer", "thumbnail", "thumbnails"])
     ?? nav(node, ["thumbnail", "thumbnails"])) as AnyRec[] | undefined;
   if (!Array.isArray(thumbs) || thumbs.length === 0) return undefined;
   const best = thumbs[thumbs.length - 1];
@@ -237,6 +238,21 @@ function thumbnailFrom(node: unknown): string | undefined {
   if (!url) return undefined;
   // Google art URLs encode a crop like "=w60-h60" or "...-w60-h60-..."; request larger.
   return url.replace(/=w\d+-h\d+/, "=w240-h240").replace(/-w\d+-h\d+(-[a-z])/i, "-w240-h240$1");
+}
+
+// The cover shown atop an album/playlist page, so its tracks can inherit it.
+export function headerThumbnail(response: unknown): string | undefined {
+  const headers = [
+    nav(response, ["header", "musicDetailHeaderRenderer"]),
+    nav(response, ["header", "musicResponsiveHeaderRenderer"]),
+    nav(response, ["contents", "twoColumnBrowseResultsRenderer", "tabs", 0, "tabRenderer", "content", "sectionListRenderer", "contents", 0, "musicResponsiveHeaderRenderer"])
+  ];
+  for (const header of headers) {
+    if (!header) continue;
+    const thumb = thumbnailFrom(header);
+    if (thumb) return thumb;
+  }
+  return undefined;
 }
 
 function parseTwoRow(node: unknown): ParsedItem | null {

@@ -1,6 +1,6 @@
 import type { SourceBrowseItem, SourceBrowseResponse } from "@misonos/sonos-protocol";
 import { encodeId, decodeId, type YtmId } from "./ids.js";
-import { browseMusic, nextPlaylist, panelTracks, parseShelves, parseShelfItem, searchMusic, type ParsedItem, type ParsedShelf } from "./ytmApi.js";
+import { browseMusic, headerThumbnail, nextPlaylist, panelTracks, parseShelves, parseShelfItem, searchMusic, type ParsedItem, type ParsedShelf } from "./ytmApi.js";
 import { hasCookieAuth } from "./cookieAuth.js";
 
 export async function browse(rawId: string): Promise<SourceBrowseResponse> {
@@ -67,7 +67,8 @@ async function browseId(id: YtmId): Promise<SourceBrowseItem[]> {
     case "supermix":
       return supermixTracks();
     case "artist":
-      return shelvesAsItems(await safeShelves(id.channelId, `artist:${id.channelId}`));
+      // Library-artist pages (MPLA…) require auth; public channel pages tolerate it.
+      return shelvesAsItems(await safeShelves(id.channelId, `artist:${id.channelId}`, hasCookieAuth()));
     case "album":
       return albumTracks(id.browseId);
     case "playlist":
@@ -202,6 +203,8 @@ async function albumTracks(browseId: string): Promise<SourceBrowseItem[]> {
     const response = await browseMusic(browseId);
     // Album page has tracks inside musicShelfRenderer (sometimes under twoColumnBrowseResultsRenderer)
     const sections = sectionList(response);
+    // Album track rows carry no per-track art, so fall back to the album cover.
+    const cover = headerThumbnail(response);
     const out: SourceBrowseItem[] = [];
     for (const section of sections) {
       const shelf = nav(section, ["musicShelfRenderer"]);
@@ -211,7 +214,7 @@ async function albumTracks(browseId: string): Promise<SourceBrowseItem[]> {
       for (const raw of contents) {
         const parsed = parseShelfItem(raw);
         if (!parsed) continue;
-        const item = toSourceItem(parsed, undefined);
+        const item = toSourceItem({ ...parsed, thumbnailUrl: parsed.thumbnailUrl ?? cover }, undefined);
         if (item) out.push(item);
       }
     }
