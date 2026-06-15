@@ -780,6 +780,9 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const [stack, setStack] = useState<BrowseCrumb[]>([]);
   const crumbsRef = useRef<HTMLElement | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // Session cache of browse results, keyed by source + container id; evicted per-key
+  // by the refresh button so revisiting a level is instant.
+  const browseCache = useRef<Map<string, Awaited<ReturnType<typeof bridgeApi.browseSource>>>>(new Map());
 
   // Keep the current location (rightmost crumb) in view as the trail grows.
   useEffect(() => {
@@ -789,7 +792,11 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   useEffect(() => {
     const onAuthChange = (event: Event) => {
       const detail = (event as CustomEvent<{ sourceId?: string }>).detail;
-      if (!detail?.sourceId || detail.sourceId === sourceId) setRefreshNonce((n) => n + 1);
+      if (!detail?.sourceId || detail.sourceId === sourceId) {
+        // Auth changed (e.g. cookies pasted) — drop cached anonymous results.
+        browseCache.current.clear();
+        setRefreshNonce((n) => n + 1);
+      }
     };
     window.addEventListener("misonos:source-auth-changed", onAuthChange);
     return () => window.removeEventListener("misonos:source-auth-changed", onAuthChange);
@@ -865,13 +872,25 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
     // Ignore a stale in-flight response when the view changes again before it lands,
     // so a slow browse can't overwrite a newer one (e.g. navigating back to root).
     let cancelled = false;
+    const id = stack.length > 0 ? stack[stack.length - 1].id : undefined;
+    const cacheKey = `${sourceId}:${id ?? "root"}`;
+    // Show cached results instantly on revisit; the refresh button evicts the key so
+    // it refetches (e.g. to regenerate a Supermix). Browse results rarely change
+    // moment-to-moment, so caching avoids a slow round-trip on every navigation.
+    const cached = browseCache.current.get(cacheKey);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+      setError("");
+      return;
+    }
     setLoading(true);
     setError("");
     void (async () => {
       try {
-        const id = stack.length > 0 ? stack[stack.length - 1].id : undefined;
         const next = await bridgeApi.browseSource(sourceId, id);
         if (cancelled) return;
+        browseCache.current.set(cacheKey, next);
         setData(next);
       } catch (err) {
         if (cancelled) return;
@@ -1098,7 +1117,11 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
             title="Refresh"
             aria-label="Refresh"
             disabled={loading}
-            onClick={() => setRefreshNonce((nonce) => nonce + 1)}
+            onClick={() => {
+              const id = stack.length > 0 ? stack[stack.length - 1].id : undefined;
+              browseCache.current.delete(`${sourceId}:${id ?? "root"}`);
+              setRefreshNonce((nonce) => nonce + 1);
+            }}
           >
             <RefreshCw size={14} className={loading ? "spin" : undefined} />
           </button>

@@ -273,6 +273,17 @@ export function headerThumbnail(response: unknown): string | undefined {
   return undefined;
 }
 
+// Classify a browse target. Library artists use a LIBRARY_ARTIST page type and an
+// MPLA… id that the explicit checks miss, so fall back to id-prefix heuristics.
+function pageKind(pageType: string | undefined, browseId: string): ParsedItem["kind"] {
+  if (pageType === "MUSIC_PAGE_TYPE_ALBUM") return "album";
+  if (pageType === "MUSIC_PAGE_TYPE_ARTIST" || pageType === "MUSIC_PAGE_TYPE_USER_CHANNEL"
+    || pageType?.includes("ARTIST") || browseId.startsWith("UC") || browseId.startsWith("MPLA")) {
+    return "artist";
+  }
+  return "playlist";
+}
+
 function parseTwoRow(node: unknown): ParsedItem | null {
   const title = textRun(nav(node, ["title"]));
   if (!title) return null;
@@ -290,11 +301,7 @@ function parseTwoRow(node: unknown): ParsedItem | null {
     const browseId = (browseEndpoint as AnyRec).browseId as string | undefined;
     const pageType = nav(browseEndpoint, ["browseEndpointContextSupportedConfigs", "browseEndpointContextMusicConfig", "pageType"]) as string | undefined;
     if (!browseId) return null;
-    let kind: ParsedItem["kind"] = "playlist";
-    if (pageType === "MUSIC_PAGE_TYPE_ARTIST" || pageType === "MUSIC_PAGE_TYPE_USER_CHANNEL") kind = "artist";
-    else if (pageType === "MUSIC_PAGE_TYPE_ALBUM") kind = "album";
-    else if (pageType === "MUSIC_PAGE_TYPE_PLAYLIST") kind = "playlist";
-    return { kind, title, subtitle: subtitleParts.join(" · ") || undefined, browseId };
+    return { kind: pageKind(pageType, browseId), title, subtitle: subtitleParts.join(" · ") || undefined, browseId };
   }
   if (watchEndpoint) {
     const videoId = (watchEndpoint as AnyRec).videoId as string | undefined;
@@ -358,10 +365,7 @@ function parseResponsiveListItem(node: unknown): ParsedItem | null {
     const browseId = (browseEndpoint as AnyRec).browseId as string | undefined;
     const pageType = nav(browseEndpoint, ["browseEndpointContextSupportedConfigs", "browseEndpointContextMusicConfig", "pageType"]) as string | undefined;
     if (!browseId) return null;
-    let kind: ParsedItem["kind"] = "playlist";
-    if (pageType === "MUSIC_PAGE_TYPE_ARTIST" || pageType === "MUSIC_PAGE_TYPE_USER_CHANNEL") kind = "artist";
-    else if (pageType === "MUSIC_PAGE_TYPE_ALBUM") kind = "album";
-    return { kind, title, subtitle, browseId };
+    return { kind: pageKind(pageType, browseId), title, subtitle, browseId };
   }
   if (typeof watchEndpoint === "string") {
     return { kind: "song", title, subtitle, videoId: watchEndpoint, artist, album, durationSeconds };
