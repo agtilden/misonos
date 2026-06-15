@@ -1,11 +1,16 @@
-import { ArrowLeft, AudioLines, ChevronDown, ListEnd, ListPlus, Pause, Play, RefreshCw, Settings, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
-import { IconCategoryPlus, IconMusic } from "@tabler/icons-react";
+import { ArrowLeft, AudioLines, Blend, Check, Circle, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Play, Plus, RefreshCw, Repeat, Repeat1, Settings, Shuffle, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
+import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BridgeSnapshot, NowPlaying, QueueItem, SonosGroup, SonosZone, TransportAction, VolumeState } from "@misonos/sonos-protocol";
+import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
+import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { bridgeApi, subscribeBridgeEvents } from "./api.js";
-import { paletteForMembers } from "./groupPalette.js";
+import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
+import { GroupDropdown } from "./GroupDropdown.js";
+import { buildGroupOptions } from "./groupPalette.js";
+import { LAST_GROUP_PREF, LAST_SOURCE_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
 const GroupEditor = lazy(() => import("./GroupEditor.js").then((module) => ({ default: module.GroupEditor })));
+const LibraryView = lazy(() => import("./LibraryView.js").then((module) => ({ default: module.LibraryView })));
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type QueueState = "idle" | "loading" | "ready" | "error";
@@ -27,12 +32,17 @@ export function App() {
   const [groupEditBusy, setGroupEditBusy] = useState(false);
   const [pendingGroupEdits, setPendingGroupEdits] = useState<PendingGroupEdit[]>([]);
   const [state, setState] = useState<LoadState>("idle");
-  const [view, setView] = useState<"main" | "settings" | "browse" | "editor">("main");
+  const [view, setView] = useState<"main" | "settings" | "browse" | "editor" | "library">("main");
   const [artworkFullscreen, setArtworkFullscreen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
+  const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
+  const [showDevPanels, setShowDevPanels] = useState<boolean>(() => readLocalPref(SHOW_DEV_PANELS_PREF) ?? false);
   const groupEditQueueRef = useRef<PendingGroupEdit[]>([]);
   const groupEditProcessingRef = useRef(false);
+  // Best-known "last selected group" membership key — seeded synchronously from the
+  // local cache, then refreshed from the shared bridge store on mount.
+  const storedGroupKeyRef = useRef<string>(readStoredGroupKey());
 
   const displayGroups = useMemo(() => {
     const next = applyPendingGroupEdits(groups, pendingGroupEdits);
@@ -60,9 +70,6 @@ export function App() {
     return selectedPrimaryZone ? zoneVolumes[selectedPrimaryZone.id] ?? null : null;
   }, [groupVolume, selectedGroup, selectedPrimaryZone, selectedVisibleZones, zoneVolumes]);
 
-  const primaryVolumeLabel = selectedGroup && selectedVisibleZones.length > 1
-    ? `${paletteForMembers(selectedVisibleZones.map((zone) => zone.uuid)).name} group`
-    : selectedPrimaryZone?.name ?? "Selected room";
 
   const playbackProgress = useMemo(
     () => playbackProgressFromNowPlaying(nowPlaying, playbackTick),
@@ -91,7 +98,7 @@ export function App() {
     setGroups((current) => (groupsTopologyKey(current) === groupsTopologyKey(snapshot.groups) ? current : snapshot.groups));
     setSelectedGroupId((current) => {
       if (current && snapshot.groups.some((group) => group.id === current)) return current;
-      const stored = readStoredGroupKey();
+      const stored = storedGroupKeyRef.current;
       if (stored) {
         const match = snapshot.groups.find((group) => membershipKey(group) === stored);
         if (match) return match.id;
@@ -104,8 +111,22 @@ export function App() {
     if (!selectedGroupId) return;
     const group = groups.find((entry) => entry.id === selectedGroupId);
     if (!group) return;
-    try { window.localStorage.setItem(SELECTED_GROUP_STORAGE_KEY, membershipKey(group)); } catch { /* ignore */ }
+    const key = membershipKey(group);
+    storedGroupKeyRef.current = key;
+    setPref(LAST_GROUP_PREF, key);
   }, [selectedGroupId, groups]);
+
+  // Hydrate cross-device preferences from the shared bridge store once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    void loadPref(LAST_GROUP_PREF).then((value) => {
+      if (!cancelled && value) storedGroupKeyRef.current = value;
+    });
+    void loadPref(SHOW_DEV_PANELS_PREF).then((value) => {
+      if (!cancelled && value !== null) setShowDevPanels(value);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const loadNowPlaying = useCallback(async (groupId: string) => {
     setNowPlaying(await bridgeApi.nowPlaying(groupId));
@@ -202,10 +223,87 @@ export function App() {
     void loadNowPlaying(selectedGroup.id);
   };
 
+  // Per-group playback state, so the group dropdown can show which rooms are playing
+  // and offer a quick play/pause for each. Refreshed on topology change and on open.
+  const loadGroupPlayback = useCallback(async (groupList: SonosGroup[]) => {
+    const entries = await Promise.all(groupList.map(async (group): Promise<readonly [string, PlaybackState]> => {
+      try {
+        return [group.id, (await bridgeApi.nowPlaying(group.id)).state];
+      } catch {
+        return [group.id, "UNKNOWN"];
+      }
+    }));
+    setGroupPlayback(Object.fromEntries(entries));
+  }, []);
+
+  useEffect(() => {
+    if (groups.length > 0) void loadGroupPlayback(groups);
+  }, [groups, loadGroupPlayback]);
+
+  // Keep the selected group's entry live from its (SSE/poll-driven) now-playing updates.
+  useEffect(() => {
+    if (nowPlaying) setGroupPlayback((current) => ({ ...current, [nowPlaying.groupId]: nowPlaying.state }));
+  }, [nowPlaying]);
+
+  const toggleGroupPlayback = useCallback(async (groupId: string, action: TransportAction) => {
+    try {
+      const next = await bridgeApi.transport(groupId, action);
+      setGroupPlayback((current) => ({ ...current, [groupId]: next.state }));
+      setNowPlaying((current) => (current && current.groupId === groupId ? next : current));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not change playback");
+    }
+  }, []);
+
+  const pauseAllGroups = useCallback(async () => {
+    const targets = groups.filter((group) => groupPlayback[group.id] === "PLAYING");
+    await Promise.all(targets.map((group) =>
+      bridgeApi.transport(group.id, "pause")
+        .then((next) => setGroupPlayback((current) => ({ ...current, [group.id]: next.state })))
+        .catch(() => null)
+    ));
+    setNowPlaying((current) => (current && current.state === "PLAYING" ? { ...current, state: "PAUSED_PLAYBACK" } : current));
+  }, [groups, groupPlayback]);
+
   const runSeek = async (positionSeconds: number) => {
     if (!selectedGroup) return;
     setNowPlaying(await bridgeApi.seek(selectedGroup.id, positionSeconds));
     void loadNowPlaying(selectedGroup.id);
+  };
+
+  const cycleRepeat = async () => {
+    if (!selectedGroup) return;
+    const order: RepeatMode[] = ["none", "all", "one"];
+    const next = order[(order.indexOf(nowPlaying?.repeat ?? "none") + 1) % order.length];
+    setNowPlaying(await bridgeApi.setPlayMode(selectedGroup.id, next, nowPlaying?.shuffle ?? false));
+  };
+
+  const toggleShuffle = async () => {
+    if (!selectedGroup) return;
+    setNowPlaying(await bridgeApi.setPlayMode(selectedGroup.id, nowPlaying?.repeat ?? "none", !(nowPlaying?.shuffle ?? false)));
+  };
+
+  const toggleCrossfade = async () => {
+    if (!selectedGroup) return;
+    setNowPlaying(await bridgeApi.setCrossfade(selectedGroup.id, !(nowPlaying?.crossfade ?? false)));
+  };
+
+  const setSleep = async (seconds: number) => {
+    if (!selectedGroup) return;
+    setNowPlaying(await bridgeApi.setSleepTimer(selectedGroup.id, seconds));
+  };
+
+  const saveQueueAsPlaylist = async () => {
+    if (!selectedGroup) return;
+    const name = window.prompt("Save current queue as playlist:")?.trim();
+    if (!name) return;
+    try {
+      const result = await bridgeApi.savePlaylistFromQueue(name, selectedGroup.id);
+      const skip = result.skipped > 0 ? ` (${result.skipped} not from a known source, skipped)` : "";
+      setMessage(`Saved ${result.saved} ${result.saved === 1 ? "track" : "tracks"} to “${result.playlist.name}”${skip}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save queue");
+    }
   };
 
   const setZoneVolume = async (zoneId: string, volume: number) => {
@@ -310,13 +408,11 @@ export function App() {
     enqueueGroupEdit({ id: randomEditId(), type: "join", zoneId, groupId });
   };
 
-  const groupOptions = displayGroups.map((group) => {
-    const visible = group.zones.filter((zone) => zone.visible);
-    const { color, name } = paletteForMembers(visible.map((zone) => zone.uuid));
-    const zoneList = visible.map((zone) => zone.name).join(" + ");
-    return { id: group.id, key: membershipKey(group), color, name, zoneList };
-  });
+  const groupOptions = buildGroupOptions(displayGroups);
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroup?.id) ?? groupOptions[0];
+  const primaryVolumeLabel = selectedGroup && selectedVisibleZones.length > 1
+    ? `${selectedGroupOption?.name ?? "Group"} group`
+    : selectedPrimaryZone?.name ?? "Selected room";
 
   return (
     <main className="app-shell">
@@ -329,10 +425,17 @@ export function App() {
               selectedOption={selectedGroupOption}
               onSelect={setSelectedGroupId}
               onEditGroups={() => setView("editor")}
+              playback={groupPlayback}
+              onTogglePlay={(groupId, playing) => void toggleGroupPlayback(groupId, playing ? "pause" : "play")}
+              onPauseAll={() => void pauseAllGroups()}
+              onOpen={() => { if (groups.length > 0) void loadGroupPlayback(groups); }}
             />
             <div className="topbar-actions">
               <button className="icon-button" type="button" title="Browse music sources" aria-label="Browse music sources" onClick={() => setView("browse")}>
                 <IconMusic size={18} />
+              </button>
+              <button className="icon-button" type="button" title="Library (favorites & playlists)" aria-label="Library" onClick={() => setView("library")}>
+                <Library size={18} />
               </button>
               <button className="icon-button" type="button" title="Settings" aria-label="Settings" onClick={() => setView("settings")}>
                 <Settings size={18} />
@@ -344,7 +447,7 @@ export function App() {
             <button className="icon-button topbar-back" type="button" title="Back" aria-label="Back" onClick={() => setView("main")}>
               <ArrowLeft size={18} />
             </button>
-            <span className="topbar-title">{view === "settings" ? "Settings" : view === "browse" ? "Browse" : "Group Editor"}</span>
+            <span className="topbar-title">{view === "settings" ? "Settings" : view === "browse" ? "Browse" : view === "library" ? "Library" : "Group Editor"}</span>
             {view === "settings" ? (
               <>
                 <p className="eyebrow">MiSonos</p>
@@ -387,11 +490,23 @@ export function App() {
 
       {view === "settings" ? (
         <section className="settings-page" aria-label="Settings">
+          <Preferences
+            showDevPanels={showDevPanels}
+            onShowDevPanelsChange={(value) => {
+              setShowDevPanels(value);
+              setPref(SHOW_DEV_PANELS_PREF, value);
+            }}
+          />
+          <Equalizer zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
           <AboutSystem />
           <YouTubeMusicAuth />
           <CustomMusicServices zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
-          <MusicServicesDebug />
-          <BrowseDebug />
+          {showDevPanels ? (
+            <>
+              <MusicServicesDebug />
+              <BrowseDebug />
+            </>
+          ) : null}
         </section>
       ) : view === "editor" ? (
         <section className="editor-page" aria-label="Group editor">
@@ -405,6 +520,16 @@ export function App() {
               onUngroupZone={(zoneId) => void makeZoneStandalone(zoneId)}
               onPromoteZone={(zoneId) => void promoteZone(zoneId)}
               onClose={() => setView("main")}
+            />
+          </Suspense>
+        </section>
+      ) : view === "library" ? (
+        <section className="settings-page" aria-label="Library">
+          <Suspense fallback={<div className="empty-panel">Loading library...</div>}>
+            <LibraryView
+              groups={displayGroups}
+              selectedGroupId={selectedGroup?.id}
+              onSelectGroup={setSelectedGroupId}
             />
           </Suspense>
         </section>
@@ -469,6 +594,43 @@ export function App() {
               <SkipForward size={22} />
             </button>
           </div>
+          <div className="transport-modes">
+            <button
+              className={`icon-button mode${nowPlaying?.repeat && nowPlaying.repeat !== "none" ? " active" : ""}`}
+              type="button"
+              title={nowPlaying?.repeat === "one" ? "Repeat one" : nowPlaying?.repeat === "all" ? "Repeat all" : "Repeat off"}
+              aria-label="Cycle repeat mode"
+              disabled={!selectedGroup}
+              onClick={() => void cycleRepeat()}
+            >
+              {nowPlaying?.repeat === "one" ? <Repeat1 size={18} /> : <Repeat size={18} />}
+            </button>
+            <button
+              className={`icon-button mode${nowPlaying?.shuffle ? " active" : ""}`}
+              type="button"
+              title={nowPlaying?.shuffle ? "Shuffle on" : "Shuffle off"}
+              aria-label="Toggle shuffle"
+              disabled={!selectedGroup}
+              onClick={() => void toggleShuffle()}
+            >
+              <Shuffle size={18} />
+            </button>
+            <button
+              className={`icon-button mode${nowPlaying?.crossfade ? " active" : ""}`}
+              type="button"
+              title={nowPlaying?.crossfade ? "Crossfade on" : "Crossfade off"}
+              aria-label="Toggle crossfade"
+              disabled={!selectedGroup}
+              onClick={() => void toggleCrossfade()}
+            >
+              <Blend size={18} />
+            </button>
+            <SleepTimer
+              remainingSeconds={nowPlaying?.sleepTimerSeconds}
+              disabled={!selectedGroup}
+              onSet={(seconds) => void setSleep(seconds)}
+            />
+          </div>
           <div className="playback-volume">
             <VolumeControl
               label={primaryVolumeLabel}
@@ -512,6 +674,16 @@ export function App() {
           <div className="section-heading">
             <h2>Queue</h2>
             <div className="heading-actions">
+              <button
+                className="icon-button compact"
+                type="button"
+                title="Save queue as playlist"
+                aria-label="Save queue as playlist"
+                disabled={queue.length === 0 || !selectedGroup}
+                onClick={() => void saveQueueAsPlaylist()}
+              >
+                <Plus size={16} />
+              </button>
               <span>{queue.length}</span>
             </div>
           </div>
@@ -556,112 +728,6 @@ export function App() {
   );
 }
 
-interface GroupOption {
-  id: string;
-  key: string;
-  color: string;
-  name: string;
-  zoneList: string;
-}
-
-interface GroupDropdownProps {
-  options: GroupOption[];
-  selectedId?: string;
-  selectedOption?: GroupOption;
-  onSelect: (groupId: string) => void;
-  onEditGroups?: () => void;
-}
-
-function GroupDropdown({ options, selectedId, selectedOption, onSelect, onEditGroups }: GroupDropdownProps) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (event: MouseEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
-
-  if (options.length === 0) {
-    return <div className="topbar-group-empty">No groups</div>;
-  }
-
-  return (
-    <div className="topbar-group" ref={containerRef}>
-      <button
-        type="button"
-        className="topbar-group-trigger"
-        style={selectedOption ? { background: hexToRgba(selectedOption.color, 0.18), borderColor: hexToRgba(selectedOption.color, 0.55) } : undefined}
-        onClick={() => setOpen((current) => !current)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        {selectedOption ? (
-          <>
-            <span className="group-color-chip" style={{ background: selectedOption.color }} aria-hidden="true" />
-            <span className="topbar-group-label">
-              <strong>{selectedOption.name}</strong>
-              {selectedOption.zoneList ? <small>{selectedOption.zoneList}</small> : null}
-            </span>
-          </>
-        ) : (
-          <span className="topbar-group-label"><strong>Select group</strong></span>
-        )}
-        <ChevronDown size={16} aria-hidden="true" />
-      </button>
-      {open ? (
-        <ul className="topbar-group-menu" role="listbox">
-          {options.map((option) => (
-            <li key={option.key}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={option.id === selectedId}
-                className={option.id === selectedId ? "selected" : undefined}
-                style={{ background: hexToRgba(option.color, 0.18), borderColor: hexToRgba(option.color, 0.55) }}
-                onClick={() => { onSelect(option.id); setOpen(false); }}
-              >
-                <span className="group-color-chip" style={{ background: option.color }} aria-hidden="true" />
-                <span className="topbar-group-label">
-                  <strong>{option.name}</strong>
-                  {option.zoneList ? <small>{option.zoneList}</small> : null}
-                </span>
-              </button>
-            </li>
-          ))}
-          {onEditGroups ? (
-            <>
-              <li className="topbar-group-menu-separator" aria-hidden="true" />
-              <li>
-                <button
-                  type="button"
-                  className="topbar-group-menu-action"
-                  onClick={() => { onEditGroups(); setOpen(false); }}
-                >
-                  <IconCategoryPlus size={16} aria-hidden="true" />
-                  <span className="topbar-group-label"><strong>Edit Groups</strong></span>
-                </button>
-              </li>
-            </>
-          ) : null}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const value = hex.replace("#", "");
-  const bigint = parseInt(value, 16);
-  const r = (bigint >> 16) & 255;
-  const g = (bigint >> 8) & 255;
-  const b = bigint & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
 interface SourceBrowserProps {
   groups: SonosGroup[];
   selectedGroupId?: string;
@@ -673,21 +739,27 @@ interface BrowseCrumb {
   title: string;
 }
 
-const SOURCE_STORAGE_KEY = "misonos:lastSourceId";
-
 function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowserProps) {
   const [sources, setSources] = useState<Awaited<ReturnType<typeof bridgeApi.listSources>> | null>(null);
-  const [sourceId, setSourceId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try { return window.localStorage.getItem(SOURCE_STORAGE_KEY); } catch { return null; }
-  });
+  const [sourceId, setSourceId] = useState<string | null>(() => readLocalPref(LAST_SOURCE_PREF));
+  const sourceInitializedRef = useRef(false);
+  const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
+  const [menu, setMenu] = useState<{ item: SourceBrowseItem; x: number; y: number } | null>(null);
+  const [addTo, setAddTo] = useState<SourceBrowseItem | null>(null);
 
   const persistSourceId = useCallback((id: string) => {
     setSourceId(id);
-    try { window.localStorage.setItem(SOURCE_STORAGE_KEY, id); } catch { /* ignore */ }
+    setPref(LAST_SOURCE_PREF, id);
   }, []);
   const [stack, setStack] = useState<BrowseCrumb[]>([]);
+  const crumbsRef = useRef<HTMLElement | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+
+  // Keep the current location (rightmost crumb) in view as the trail grows.
+  useEffect(() => {
+    const el = crumbsRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [stack]);
   useEffect(() => {
     const onAuthChange = (event: Event) => {
       const detail = (event as CustomEvent<{ sourceId?: string }>).detail;
@@ -714,20 +786,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
   const supportsSearch = activeSource?.capabilities?.includes("search") ?? false;
   const supportsTypedSearch = sourceId === "youtube-music";
 
-  const browseGroupOptions = useMemo(
-    () => groups.map((group) => {
-      const visible = group.zones.filter((zone) => zone.visible);
-      const { color, name } = paletteForMembers(visible.map((zone) => zone.uuid));
-      return {
-        id: group.id,
-        key: membershipKey(group),
-        color,
-        name,
-        zoneList: visible.map((zone) => zone.name).join(" + ")
-      };
-    }),
-    [groups]
-  );
+  const browseGroupOptions = useMemo(() => buildGroupOptions(groups), [groups]);
 
   const runSearch = useCallback(async (overrideType?: "song" | "artist" | "album") => {
     if (!sourceId || !searchQuery.trim()) return;
@@ -756,10 +815,18 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
       try {
         const next = await bridgeApi.listSources();
         setSources(next);
-        if (next.length > 0) {
-          const stillExists = sourceId ? next.some((entry) => entry.id === sourceId) : false;
-          if (!stillExists) persistSourceId(next[0].id);
+        if (next.length === 0) return;
+        if (!sourceInitializedRef.current) {
+          // First load: prefer the shared bridge value (falling back to the local cache),
+          // so a source picked on another device carries over here.
+          sourceInitializedRef.current = true;
+          const preferred = await loadPref(LAST_SOURCE_PREF);
+          const chosen = preferred && next.some((entry) => entry.id === preferred) ? preferred : next[0].id;
+          persistSourceId(chosen);
+          return;
         }
+        const stillExists = sourceId ? next.some((entry) => entry.id === sourceId) : false;
+        if (!stillExists) persistSourceId(next[0].id);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load sources");
       }
@@ -768,19 +835,25 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
 
   useEffect(() => {
     if (!sourceId || searchActive) return;
+    // Ignore a stale in-flight response when the view changes again before it lands,
+    // so a slow browse can't overwrite a newer one (e.g. navigating back to root).
+    let cancelled = false;
     setLoading(true);
     setError("");
     void (async () => {
       try {
         const id = stack.length > 0 ? stack[stack.length - 1].id : undefined;
         const next = await bridgeApi.browseSource(sourceId, id);
+        if (cancelled) return;
         setData(next);
       } catch (err) {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to browse");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+    return () => { cancelled = true; };
   }, [sourceId, stack, searchActive, refreshNonce]);
 
   const drill = useCallback((item: { id: string; title: string }) => {
@@ -791,6 +864,38 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
   const pop = useCallback((targetIndex: number) => {
     setStack((current) => current.slice(0, targetIndex));
   }, []);
+
+  // Favorites are global; load once into a Set so rows can show favorited state.
+  useEffect(() => {
+    let cancelled = false;
+    void bridgeApi.favorites()
+      .then((favs) => { if (!cancelled) setFavoriteKeys(new Set(favs.map((f) => `${f.sourceId}:${f.itemId}`))); })
+      .catch(() => { /* non-fatal */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const isFavorited = (item: SourceBrowseItem): boolean => !!sourceId && favoriteKeys.has(`${sourceId}:${item.id}`);
+
+  const toggleFavorite = useCallback(async (item: SourceBrowseItem) => {
+    if (!sourceId) return;
+    const key = `${sourceId}:${item.id}`;
+    try {
+      if (favoriteKeys.has(key)) {
+        await bridgeApi.removeFavorite(sourceId, item.id);
+        setFavoriteKeys((prev) => { const next = new Set(prev); next.delete(key); return next; });
+        setStatus({ ok: true, message: `Removed “${item.title}” from favorites.` });
+      } else {
+        await bridgeApi.addFavorite({
+          kind: item.kind === "album" ? "album" : "track",
+          sourceId, itemId: item.id, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album
+        });
+        setFavoriteKeys((prev) => new Set(prev).add(key));
+        setStatus({ ok: true, message: `Favorited “${item.title}”.` });
+      }
+    } catch (err) {
+      setStatus({ ok: false, message: err instanceof Error ? err.message : "Could not update favorite" });
+    }
+  }, [sourceId, favoriteKeys]);
 
   const enqueueAll = useCallback(async (mode: "replace" | "next" | "end") => {
     if (!sourceId || !selectedGroupId) {
@@ -947,7 +1052,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
         );
       })()}
 
-      <nav className="browse-crumbs" aria-label="Path">
+      <nav className="browse-crumbs" aria-label="Path" ref={crumbsRef}>
         {stack.length === 0 ? (
           <span className="browse-crumb-placeholder" aria-hidden="true" />
         ) : (
@@ -956,8 +1061,8 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
           </button>
         )}
         {stack.map((crumb, index) => (
-          <span key={`${crumb.id}-${index}`}>
-            <span className="browse-crumb-sep">/</span>
+          <span className="browse-crumb-item" key={`${crumb.id}-${index}`}>
+            <span className="browse-crumb-sep" aria-hidden="true">/</span>
             <button type="button" onClick={() => pop(index + 1)}>{crumb.title}</button>
           </span>
         ))}
@@ -972,17 +1077,20 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
           <div className="empty-panel">No items.</div>
         ) : (
           <ol className="browse-list">
-            {data.items.map((item) => {
+            {data.items.map((item, index) => {
+              // Sources (notably YouTube Music) can repeat an id across shelves, so the
+              // list index is part of the key — duplicate keys make React keep stale rows.
+              const itemKey = `${item.id}-${index}`;
               if (item.kind === "section") {
                 return (
-                  <li key={item.id} className="browse-section">
+                  <li key={itemKey} className="browse-section">
                     {item.title}
                   </li>
                 );
               }
               if (item.kind === "container") {
                 return (
-                  <li key={item.id}>
+                  <li key={itemKey}>
                     <button type="button" className="browse-drill" onClick={() => drill(item)}>
                       <span>{item.title}</span>
                       {item.subtitle ? <small>{item.subtitle}</small> : null}
@@ -995,7 +1103,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
                 : [item.artist, item.album].filter(Boolean).join(" · ") + (item.durationSeconds ? ` · ${formatDuration(item.durationSeconds)}` : "");
               const isAlbum = item.kind === "album";
               return (
-                <li key={item.id}>
+                <li key={itemKey}>
                   <div className="browse-track">
                     {isAlbum ? (
                       <button type="button" className="browse-drill-inline" onClick={() => drill(item)}>
@@ -1022,22 +1130,11 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
                       <button
                         type="button"
                         className="browse-action"
-                        title="Play next"
-                        aria-label="Play next"
-                        disabled={playing !== null || !selectedGroupId}
-                        onClick={() => void enqueueItem(item, "next")}
+                        title="More actions"
+                        aria-label="More actions"
+                        onClick={(event) => setMenu({ item, x: event.clientX, y: event.clientY })}
                       >
-                        {playing === `${item.id}:next` ? "…" : <ListPlus size={14} />}
-                      </button>
-                      <button
-                        type="button"
-                        className="browse-action"
-                        title="Add to end of queue"
-                        aria-label="Add to end"
-                        disabled={playing !== null || !selectedGroupId}
-                        onClick={() => void enqueueItem(item, "end")}
-                      >
-                        {playing === `${item.id}:end` ? "…" : <ListEnd size={14} />}
+                        <MoreHorizontal size={14} />
                       </button>
                     </div>
                   </div>
@@ -1050,6 +1147,36 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
 
       {status ? (
         <div className={status.ok ? "service-result ok" : "service-result error"}>{status.message}</div>
+      ) : null}
+
+      {menu ? (
+        <>
+          <div className="action-menu-backdrop" onClick={() => setMenu(null)} onContextMenu={(event) => { event.preventDefault(); setMenu(null); }} />
+          <div className="action-menu" style={{ left: menu.x, top: menu.y }} role="menu">
+            <button type="button" className="action-menu-item" onClick={() => { void enqueueItem(menu.item, "next"); setMenu(null); }}>
+              <ListPlus size={16} /> <span className="action-menu-item-label"><span>Play next</span></span>
+            </button>
+            <button type="button" className="action-menu-item" onClick={() => { void enqueueItem(menu.item, "end"); setMenu(null); }}>
+              <ListEnd size={16} /> <span className="action-menu-item-label"><span>Add to end</span></span>
+            </button>
+            <button type="button" className="action-menu-item" onClick={() => { void toggleFavorite(menu.item); setMenu(null); }}>
+              <Heart size={16} fill={isFavorited(menu.item) ? "currentColor" : "none"} />
+              <span className="action-menu-item-label"><span>{isFavorited(menu.item) ? "Unfavorite" : "Favorite"}</span></span>
+            </button>
+            <button type="button" className="action-menu-item" onClick={() => { setAddTo(menu.item); setMenu(null); }}>
+              <Plus size={16} /> <span className="action-menu-item-label"><span>Add to playlist</span></span>
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {addTo && sourceId ? (
+        <AddToPlaylistModal
+          sourceId={sourceId}
+          item={{ id: addTo.id, kind: addTo.kind, title: addTo.title, artist: addTo.artist, album: addTo.album, durationSeconds: addTo.durationSeconds }}
+          onClose={() => setAddTo(null)}
+          onDone={(message) => setStatus({ ok: true, message })}
+        />
       ) : null}
     </section>
   );
@@ -1209,6 +1336,226 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
       ) : (
         <div className="empty-panel">No presets defined.</div>
       )}
+    </section>
+  );
+}
+
+interface EqSliderProps {
+  label: string;
+  value: number;
+  disabled?: boolean;
+  onInput: (value: number) => void;
+  onCommit: (value: number) => void;
+}
+
+function EqSlider({ label, value, disabled, onInput, onCommit }: EqSliderProps) {
+  return (
+    <div className="eq-slider">
+      <span className="eq-slider-label">{label}</span>
+      <input
+        aria-label={label}
+        type="range"
+        min="-10"
+        max="10"
+        step="1"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onInput(Number.parseInt(event.currentTarget.value, 10))}
+        onPointerUp={(event) => onCommit(Number.parseInt(event.currentTarget.value, 10))}
+        onKeyUp={(event) => onCommit(Number.parseInt(event.currentTarget.value, 10))}
+      />
+      <output>{value > 0 ? `+${value}` : value}</output>
+    </div>
+  );
+}
+
+interface EqualizerProps {
+  zones: SonosZone[];
+}
+
+function Equalizer({ zones }: EqualizerProps) {
+  const [zoneId, setZoneId] = useState<string>("");
+  const [eq, setEq] = useState<EqState | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [error, setError] = useState("");
+  const [presets, setPresets] = useState<EqPreset[]>([]);
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (zones.length === 0) { setZoneId(""); return; }
+    if (!zones.some((zone) => zone.id === zoneId)) setZoneId(zones[0].id);
+  }, [zones, zoneId]);
+
+  const loadEq = useCallback(async (id: string) => {
+    setState("loading");
+    setError("");
+    try {
+      setEq(await bridgeApi.zoneEq(id));
+      setState("ready");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load EQ");
+      setState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (zoneId) void loadEq(zoneId);
+  }, [zoneId, loadEq]);
+
+  const loadPresets = useCallback(async () => {
+    try { setPresets(await bridgeApi.eqPresets()); } catch { /* non-fatal */ }
+  }, []);
+  useEffect(() => { void loadPresets(); }, [loadPresets]);
+
+  const commit = useCallback(async (payload: EqPayload) => {
+    if (!zoneId) return;
+    setBusy(true);
+    setError("");
+    try {
+      setEq(await bridgeApi.setZoneEq(zoneId, payload));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to set EQ");
+    } finally {
+      setBusy(false);
+    }
+  }, [zoneId]);
+
+  const applyPreset = useCallback((values: EqPresetValues) => {
+    setEq((current) => (current ? { ...current, bass: values.bass, treble: values.treble, loudness: values.loudness } : current));
+    void commit({ bass: values.bass, treble: values.treble, loudness: values.loudness });
+  }, [commit]);
+
+  const saveCurrent = useCallback(async () => {
+    if (!eq || !newName.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await bridgeApi.createEqPreset({ name: newName.trim(), bass: eq.bass, treble: eq.treble, loudness: eq.loudness });
+      setNewName("");
+      await loadPresets();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save preset");
+    } finally {
+      setBusy(false);
+    }
+  }, [eq, newName, loadPresets]);
+
+  const removePreset = useCallback(async (id: number) => {
+    setBusy(true);
+    try {
+      await bridgeApi.deleteEqPreset(id);
+      await loadPresets();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete preset");
+    } finally {
+      setBusy(false);
+    }
+  }, [loadPresets]);
+
+  return (
+    <section className="queue-panel" aria-label="Equalizer">
+      <div className="section-heading"><h2>Equalizer</h2></div>
+      {zones.length === 0 ? (
+        <div className="empty-panel">No speakers found.</div>
+      ) : (
+        <div className="eq-panel">
+          <label className="eq-zone">
+            <span>Speaker</span>
+            <select value={zoneId} onChange={(event) => setZoneId(event.target.value)}>
+              {zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}
+            </select>
+          </label>
+
+          {state === "error" ? (
+            <div className="empty-panel error-panel"><span>{error}</span></div>
+          ) : eq ? (
+            <>
+              <EqSlider label="Bass" value={eq.bass} disabled={busy}
+                onInput={(value) => setEq({ ...eq, bass: value })}
+                onCommit={(value) => void commit({ bass: value })} />
+              <EqSlider label="Treble" value={eq.treble} disabled={busy}
+                onInput={(value) => setEq({ ...eq, treble: value })}
+                onCommit={(value) => void commit({ treble: value })} />
+              <label className="pref-row">
+                <span className="pref-label">
+                  <strong>Loudness</strong>
+                  <small>Boost bass &amp; treble at low volume.</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={eq.loudness}
+                  disabled={busy}
+                  onChange={(event) => { setEq({ ...eq, loudness: event.target.checked }); void commit({ loudness: event.target.checked }); }}
+                />
+              </label>
+
+              <div className="eq-presets">
+                <span className="eq-presets-label">Presets</span>
+                <div className="eq-chip-row">
+                  {BUILT_IN_EQ_PRESETS.map((preset) => (
+                    <button key={preset.name} type="button" className="eq-chip" disabled={busy} onClick={() => applyPreset(preset)}>
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
+                {presets.length > 0 ? (
+                  <div className="eq-chip-row">
+                    {presets.map((preset) => (
+                      <span key={preset.id} className="eq-chip saved">
+                        <button type="button" disabled={busy} onClick={() => applyPreset(preset)}>{preset.name}</button>
+                        <button type="button" className="eq-chip-remove" aria-label={`Delete ${preset.name}`} disabled={busy} onClick={() => void removePreset(preset.id)}>
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="eq-save">
+                  <input
+                    type="text"
+                    placeholder="Save current as…"
+                    value={newName}
+                    maxLength={40}
+                    onChange={(event) => setNewName(event.target.value)}
+                  />
+                  <button type="button" disabled={busy || !newName.trim()} onClick={() => void saveCurrent()}>Save</button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="empty-panel">Loading…</div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface PreferencesProps {
+  showDevPanels: boolean;
+  onShowDevPanelsChange: (value: boolean) => void;
+}
+
+function Preferences({ showDevPanels, onShowDevPanelsChange }: PreferencesProps) {
+  return (
+    <section className="queue-panel" aria-label="Preferences">
+      <div className="section-heading">
+        <h2>Preferences</h2>
+      </div>
+      <label className="pref-row">
+        <span className="pref-label">
+          <strong>Show developer panels</strong>
+          <small>Reveal the Music Services and Browse debug tools below.</small>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={showDevPanels}
+          onChange={(event) => onShowDevPanelsChange(event.target.checked)}
+        />
+      </label>
     </section>
   );
 }
@@ -1687,6 +2034,82 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay }: QueueListProps) {
   );
 }
 
+interface SleepTimerProps {
+  remainingSeconds?: number;
+  disabled: boolean;
+  onSet: (seconds: number) => void;
+}
+
+const SLEEP_TIMER_OPTIONS: { label: string; seconds: number }[] = [
+  { label: "Off", seconds: 0 },
+  { label: "15 minutes", seconds: 15 * 60 },
+  { label: "30 minutes", seconds: 30 * 60 },
+  { label: "45 minutes", seconds: 45 * 60 },
+  { label: "1 hour", seconds: 60 * 60 },
+  { label: "2 hours", seconds: 120 * 60 }
+];
+
+function SleepTimer({ remainingSeconds, disabled, onSet }: SleepTimerProps) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<number | null>(null);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const active = (remainingSeconds ?? 0) > 0;
+  // Which option shows a check: the one the user picked while active, or "Off" when the
+  // timer is off. (Remaining decreases, so we can't infer the original preset after the fact.)
+  const checkedSeconds = picked !== null ? picked : active ? null : 0;
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  // Drop the remembered pick when the timer turns off (so "Off" reads as selected).
+  useEffect(() => {
+    if (!active) setPicked(null);
+  }, [active]);
+
+  return (
+    <div className="sleep-timer" ref={ref}>
+      <button
+        className={`icon-button mode${active ? " active labeled" : ""}`}
+        type="button"
+        title={active ? `Sleep timer: ${Math.ceil((remainingSeconds ?? 0) / 60)} min left` : "Sleep timer"}
+        aria-label="Sleep timer"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {active ? <Circle size={18} fill="currentColor" aria-label="Sleep timer on" /> : <Moon size={18} />}
+        {active ? <span className="sleep-timer-label">{Math.ceil((remainingSeconds ?? 0) / 60)}m</span> : null}
+      </button>
+      {open ? (
+        <ul className="sleep-timer-menu" role="menu">
+          {SLEEP_TIMER_OPTIONS.map((option) => {
+            const selected = option.seconds === checkedSeconds;
+            return (
+              <li key={option.seconds}>
+                <button
+                  type="button"
+                  className={selected ? "selected" : undefined}
+                  onClick={() => { setPicked(option.seconds === 0 ? 0 : option.seconds); onSet(option.seconds); setOpen(false); }}
+                >
+                  <span>{option.label}</span>
+                  {selected ? <Check size={15} aria-hidden="true" /> : null}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 interface VolumeControlProps {
   label: string;
   value: number;
@@ -1769,11 +2192,8 @@ function formatDuration(totalSeconds: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-const SELECTED_GROUP_STORAGE_KEY = "misonos:lastGroupKey";
-
 function readStoredGroupKey(): string {
-  if (typeof window === "undefined") return "";
-  try { return window.localStorage.getItem(SELECTED_GROUP_STORAGE_KEY) ?? ""; } catch { return ""; }
+  return readLocalPref(LAST_GROUP_PREF) ?? "";
 }
 
 function confirmVolumeJump(previous: number | undefined, next: number): boolean {

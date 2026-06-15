@@ -1,9 +1,10 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
-import type { BridgeEvent, TransportAction, VolumePayload } from "@misonos/sonos-protocol";
+import type { BridgeEvent, EqPayload, EqPreset, Favorite, PlaybackMode, RecentlyViewedItem, RepeatMode, SourceItemKind, TransportAction, VolumePayload } from "@misonos/sonos-protocol";
 import type { BridgeConfig } from "./config.js";
 import { SonosEventManager } from "./sonosEvents.js";
 import { SonosService } from "./sonosService.js";
+import type { Store } from "./store/index.js";
 import { proxyStream } from "./streamProxy.js";
 import { proxyArt } from "./artProxy.js";
 
@@ -13,7 +14,7 @@ type RouteHandler = (
   url: URL
 ) => Promise<void>;
 
-export function createServer(service: SonosService, config: BridgeConfig): http.Server {
+export function createServer(service: SonosService, config: BridgeConfig, store: Store): http.Server {
   const clients = new Set<ServerResponse>();
   const sonosEvents = new SonosEventManager(config);
 
@@ -121,6 +122,32 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       return json(response, nowPlaying);
     }
 
+    const playModeMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/play-mode$/);
+    if (request.method === "POST" && playModeMatch) {
+      const body = await readJson<{ repeat: RepeatMode; shuffle: boolean }>(request);
+      if (body.repeat !== "none" && body.repeat !== "all" && body.repeat !== "one") return json(response, { error: "Invalid repeat" }, 400);
+      const nowPlaying = await service.setPlaybackMode(decodeURIComponent(playModeMatch[1]), body.repeat, !!body.shuffle);
+      sendEvent({ type: "now-playing", payload: nowPlaying, at: new Date().toISOString() });
+      return json(response, nowPlaying);
+    }
+
+    const crossfadeMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/crossfade$/);
+    if (request.method === "POST" && crossfadeMatch) {
+      const body = await readJson<{ enabled: boolean }>(request);
+      const nowPlaying = await service.setCrossfade(decodeURIComponent(crossfadeMatch[1]), !!body.enabled);
+      sendEvent({ type: "now-playing", payload: nowPlaying, at: new Date().toISOString() });
+      return json(response, nowPlaying);
+    }
+
+    const sleepTimerMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/sleep-timer$/);
+    if (request.method === "POST" && sleepTimerMatch) {
+      const body = await readJson<{ seconds: number }>(request);
+      if (typeof body.seconds !== "number" || body.seconds < 0) return json(response, { error: "Invalid seconds" }, 400);
+      const nowPlaying = await service.setSleepTimer(decodeURIComponent(sleepTimerMatch[1]), body.seconds);
+      sendEvent({ type: "now-playing", payload: nowPlaying, at: new Date().toISOString() });
+      return json(response, nowPlaying);
+    }
+
     const groupVolumeMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/volume$/);
     if (groupVolumeMatch) {
       const groupId = decodeURIComponent(groupVolumeMatch[1]);
@@ -159,6 +186,13 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       const zoneId = decodeURIComponent(volumeMatch[1]);
       if (request.method === "GET") return json(response, await service.zoneVolume(zoneId));
       if (request.method === "POST") return json(response, await service.setVolume(zoneId, await readJson<VolumePayload>(request)));
+    }
+
+    const eqMatch = url.pathname.match(/^\/api\/zones\/([^/]+)\/eq$/);
+    if (eqMatch) {
+      const zoneId = decodeURIComponent(eqMatch[1]);
+      if (request.method === "GET") return json(response, await service.zoneEq(zoneId));
+      if (request.method === "POST") return json(response, await service.setZoneEq(zoneId, await readJson<EqPayload>(request)));
     }
 
     if (request.method === "GET" && url.pathname === "/api/devices") {
@@ -277,6 +311,162 @@ export function createServer(service: SonosService, config: BridgeConfig): http.
       const body = await readJson<{ containerId: string; searchCriteria: string; startingIndex?: number; requestedCount?: number; filter?: string; sortCriteria?: string }>(request);
       if (!body.containerId || !body.searchCriteria) return json(response, { error: "Missing containerId or searchCriteria" }, 400);
       return json(response, await service.searchContainer(body));
+    }
+
+    // --- Store: preferences, recently-viewed, EQ presets (POST-only writes; CORS untouched) ---
+
+    const preferenceMatch = url.pathname.match(/^\/api\/preferences\/([^/]+)$/);
+    if (preferenceMatch) {
+      const key = decodeURIComponent(preferenceMatch[1]);
+      if (request.method === "GET") {
+        const pref = await store.getPreference(key);
+        return pref ? json(response, pref) : json(response, { error: "Not found" }, 404);
+      }
+      if (request.method === "POST") {
+        const body = await readJson<{ value: unknown }>(request);
+        return json(response, await store.setPreference(key, body.value));
+      }
+    }
+
+    if (url.pathname === "/api/recently-viewed") {
+      if (request.method === "GET") {
+        const sourceId = url.searchParams.get("sourceId") ?? undefined;
+        const limitRaw = url.searchParams.get("limit");
+        const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+        return json(response, await store.listRecentlyViewed(sourceId, Number.isNaN(limit) ? undefined : limit));
+      }
+      if (request.method === "POST") {
+        const body = await readJson<Omit<RecentlyViewedItem, "viewedAt">>(request);
+        if (!body.sourceId || !body.itemId) return json(response, { error: "Missing sourceId or itemId" }, 400);
+        await store.recordRecentlyViewed(body);
+        return empty(response, 204);
+      }
+    }
+
+    if (url.pathname === "/api/eq-presets") {
+      if (request.method === "GET") return json(response, await store.listEqPresets());
+      if (request.method === "POST") {
+        const body = await readJson<Omit<EqPreset, "id" | "createdAt">>(request);
+        if (!body.name) return json(response, { error: "Missing name" }, 400);
+        return json(response, await store.createEqPreset(body), 201);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/eq-presets/delete") {
+      const body = await readJson<{ id: number }>(request);
+      if (typeof body.id !== "number") return json(response, { error: "Missing id" }, 400);
+      await store.deleteEqPreset(body.id);
+      return empty(response, 204);
+    }
+
+    // --- Store: library (favorites + playlists) (POST-only writes; CORS untouched) ---
+
+    if (url.pathname === "/api/favorites") {
+      if (request.method === "GET") return json(response, await store.listFavorites());
+      if (request.method === "POST") {
+        const body = await readJson<Omit<Favorite, "id" | "createdAt">>(request);
+        if (!body.sourceId || !body.itemId || !body.title) return json(response, { error: "Missing sourceId, itemId or title" }, 400);
+        const kind = body.kind === "album" ? "album" : "track";
+        return json(response, await store.addFavorite({ ...body, kind }), 201);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/favorites/delete") {
+      const body = await readJson<{ sourceId: string; itemId: string }>(request);
+      if (!body.sourceId || !body.itemId) return json(response, { error: "Missing sourceId or itemId" }, 400);
+      await store.removeFavorite(body.sourceId, body.itemId);
+      return empty(response, 204);
+    }
+
+    if (url.pathname === "/api/playlists") {
+      if (request.method === "GET") return json(response, await store.listPlaylists());
+      if (request.method === "POST") {
+        const body = await readJson<{ name: string }>(request);
+        if (!body.name?.trim()) return json(response, { error: "Missing name" }, 400);
+        return json(response, await store.createPlaylist(body.name.trim()), 201);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/playlists/delete") {
+      const body = await readJson<{ id: number }>(request);
+      if (typeof body.id !== "number") return json(response, { error: "Missing id" }, 400);
+      await store.deletePlaylist(body.id);
+      return empty(response, 204);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/playlists/from-queue") {
+      const body = await readJson<{ name: string; groupId: string }>(request);
+      if (!body.name?.trim() || !body.groupId) return json(response, { error: "Missing name or groupId" }, 400);
+      const { items, skipped } = await service.queueTrackRefs(body.groupId);
+      const playlist = await store.createPlaylist(body.name.trim());
+      if (items.length > 0) await store.addPlaylistItems(playlist.id, items);
+      return json(response, { playlist: { ...playlist, itemCount: items.length }, saved: items.length, skipped }, 201);
+    }
+
+    const playlistIdMatch = url.pathname.match(/^\/api\/playlists\/(\d+)$/);
+    if (request.method === "GET" && playlistIdMatch) {
+      const result = await store.getPlaylist(Number(playlistIdMatch[1]));
+      return result ? json(response, result) : json(response, { error: "Playlist not found" }, 404);
+    }
+
+    const playlistRenameMatch = url.pathname.match(/^\/api\/playlists\/(\d+)\/rename$/);
+    if (request.method === "POST" && playlistRenameMatch) {
+      const body = await readJson<{ name: string }>(request);
+      if (!body.name?.trim()) return json(response, { error: "Missing name" }, 400);
+      return json(response, await store.renamePlaylist(Number(playlistRenameMatch[1]), body.name.trim()));
+    }
+
+    const playlistItemsMatch = url.pathname.match(/^\/api\/playlists\/(\d+)\/items$/);
+    if (request.method === "POST" && playlistItemsMatch) {
+      const id = Number(playlistItemsMatch[1]);
+      const body = await readJson<{ sourceId: string; items: { id: string; kind: SourceItemKind; title: string; artist?: string; album?: string; durationSeconds?: number }[] }>(request);
+      if (!body.sourceId || !Array.isArray(body.items)) return json(response, { error: "sourceId and items[] required" }, 400);
+      const rows: { sourceId: string; trackId: string; title: string; artist: string | null; album: string | null; durationSeconds: number | null }[] = [];
+      let skipped = 0;
+      for (const item of body.items) {
+        if (item.kind === "album" || item.kind === "container") {
+          // Flatten albums/containers into their playable tracks at add-time.
+          try {
+            const expansion = await service.browseSource(body.sourceId, item.id);
+            for (const child of expansion.items) {
+              if (child.kind === "playable") {
+                rows.push({ sourceId: body.sourceId, trackId: child.id, title: child.title, artist: child.artist ?? null, album: child.album ?? null, durationSeconds: child.durationSeconds ?? null });
+              }
+            }
+          } catch {
+            skipped++;
+          }
+        } else {
+          rows.push({ sourceId: body.sourceId, trackId: item.id, title: item.title, artist: item.artist ?? null, album: item.album ?? null, durationSeconds: item.durationSeconds ?? null });
+        }
+      }
+      const added = await store.addPlaylistItems(id, rows);
+      return json(response, { added, skipped }, 201);
+    }
+
+    const playlistItemRemoveMatch = url.pathname.match(/^\/api\/playlists\/(\d+)\/items\/remove$/);
+    if (request.method === "POST" && playlistItemRemoveMatch) {
+      const body = await readJson<{ itemId: number }>(request);
+      if (typeof body.itemId !== "number") return json(response, { error: "Missing itemId" }, 400);
+      await store.removePlaylistItem(body.itemId);
+      return empty(response, 204);
+    }
+
+    const playlistReorderMatch = url.pathname.match(/^\/api\/playlists\/(\d+)\/reorder$/);
+    if (request.method === "POST" && playlistReorderMatch) {
+      const body = await readJson<{ orderedItemIds: number[] }>(request);
+      if (!Array.isArray(body.orderedItemIds)) return json(response, { error: "orderedItemIds[] required" }, 400);
+      return json(response, await store.reorderPlaylist(Number(playlistReorderMatch[1]), body.orderedItemIds));
+    }
+
+    const playlistPlayMatch = url.pathname.match(/^\/api\/playlists\/(\d+)\/play$/);
+    if (request.method === "POST" && playlistPlayMatch) {
+      const body = await readJson<{ groupId: string; mode?: PlaybackMode }>(request);
+      if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
+      const result = await store.getPlaylist(Number(playlistPlayMatch[1]));
+      if (!result || result.items.length === 0) return json(response, { error: "Playlist is empty" }, 400);
+      const refs = result.items.map((item) => ({ sourceId: item.sourceId, trackId: item.trackId }));
+      return json(response, await service.playTrackRefs(refs, body.groupId, body.mode ?? "replace"));
     }
 
     return json(response, { error: "Not found" }, 404);

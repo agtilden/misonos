@@ -37,6 +37,8 @@ export interface QueueItem {
   itemClass?: string;
 }
 
+export type RepeatMode = "none" | "all" | "one";
+
 export interface NowPlaying {
   groupId: string;
   state: PlaybackState;
@@ -48,6 +50,10 @@ export interface NowPlaying {
   position?: string;
   playlistPosition?: number;
   uri?: string;
+  repeat?: RepeatMode;
+  shuffle?: boolean;
+  crossfade?: boolean;
+  sleepTimerSeconds?: number; // remaining seconds, 0/undefined when off
   updatedAt: string;
 }
 
@@ -183,6 +189,102 @@ export interface SourceTrackInfo {
   url: string;
   mimeType?: string;
 }
+
+// Wire (DTO) shapes for the bridge's writable store. camelCase; distinct from the
+// snake_case DB rows, which stay bridge-local. See apps/bridge/src/store.
+
+export interface Preference {
+  key: string;
+  value: unknown;
+  updatedAt: string;
+}
+
+export interface RecentlyViewedItem {
+  sourceId: string;
+  itemId: string;
+  kind: SourceItemKind;
+  title: string;
+  subtitle?: string | null;
+  viewedAt: string;
+}
+
+export interface EqPreset {
+  id: number;
+  name: string;
+  bass: number; // -10..10
+  treble: number; // -10..10
+  loudness: boolean;
+  createdAt: string;
+}
+
+export type FavoriteKind = "track" | "album";
+
+export interface Favorite {
+  id: number;
+  kind: FavoriteKind;
+  sourceId: string;
+  itemId: string;
+  title: string;
+  subtitle?: string | null;
+  artist?: string | null;
+  album?: string | null;
+  createdAt: string;
+}
+
+export interface Playlist {
+  id: number;
+  name: string;
+  itemCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaylistItem {
+  id: number;
+  playlistId: number;
+  position: number;
+  sourceId: string;
+  trackId: string;
+  title: string;
+  artist?: string | null;
+  album?: string | null;
+  durationSeconds?: number | null;
+  addedAt: string;
+}
+
+// Live equalizer state for a single speaker (RenderingControl is per-player, Master channel).
+export interface EqState {
+  id: string; // zone id
+  bass: number; // -10..10
+  treble: number; // -10..10
+  loudness: boolean;
+}
+
+export interface EqPayload {
+  bass?: number;
+  treble?: number;
+  loudness?: boolean;
+}
+
+// The tone values a preset applies. Built-in presets carry no DB id/createdAt.
+export interface EqPresetValues {
+  bass: number;
+  treble: number;
+  loudness: boolean;
+}
+
+export interface BuiltInEqPreset extends EqPresetValues {
+  name: string;
+}
+
+export const BUILT_IN_EQ_PRESETS: BuiltInEqPreset[] = [
+  { name: "Flat", bass: 0, treble: 0, loudness: false },
+  { name: "Bass Boost", bass: 6, treble: 0, loudness: false },
+  { name: "Treble Boost", bass: 0, treble: 5, loudness: false },
+  { name: "Vocal", bass: -2, treble: 3, loudness: false },
+  { name: "Late Night", bass: -4, treble: -1, loudness: true },
+  { name: "Loudness", bass: 2, treble: 2, loudness: true }
+];
 
 export interface SonosDeviceInfo {
   uuid: string;

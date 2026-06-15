@@ -12,6 +12,11 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@misonos/sonos-protocol": "file:../../packages/sonos-protocol"
+    "@misonos/sonos-protocol": "file:../../packages/sonos-protocol",
+    "better-sqlite3": "^11.5.0",
+    "kysely": "^0.29.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11"
   }
 }

@@ -1,4 +1,4 @@
-import { firstDidlItem, parseDidlItems, type BridgeSnapshot, type NowPlaying, type PlaybackState, type QueueItem, type SonosGroup, type SonosZone, type TransportAction, type VolumePayload, type VolumeState } from "@misonos/sonos-protocol";
+import { firstDidlItem, parseDidlItems, type BridgeSnapshot, type EqPayload, type EqState, type NowPlaying, type PlaybackState, type QueueItem, type RepeatMode, type SonosGroup, type SonosZone, type TransportAction, type VolumePayload, type VolumeState } from "@misonos/sonos-protocol";
 import { loadConfig, type BridgeConfig } from "./config.js";
 import { discoverSsdp } from "./ssdp.js";
 import { callSoap, SonosSoapError, type ServiceType } from "./sonosSoap.js";
@@ -71,6 +71,8 @@ export interface SmapiAccountScanResult {
   scannedAt: string;
 }
 
+const SMAPI_MISS_COOLDOWN_MS = 5 * 60 * 1000;
+
 export class SonosService {
   private zones = new Map<string, SonosZone>();
   private groups = new Map<string, SonosGroup>();
@@ -78,6 +80,10 @@ export class SonosService {
   // S1 firmware normalizes queue DIDL (title becomes the raw URI), so
   // now-playing/queue views resolve display metadata from the source instead.
   private smapiTrackMeta = new Map<string, SourceTrackInfo>();
+  // Keys whose metadata fetch failed recently (e.g. an unavailable YouTube video) →
+  // expiry timestamp. Stops now-playing polls from re-running the expensive source
+  // resolution every cycle for a track that can't be resolved.
+  private smapiTrackMisses = new Map<string, number>();
   private lastDiscovery = 0;
   private rediscoveryTimer: ReturnType<typeof setTimeout> | undefined;
   private rediscoveryInProgress = false;
@@ -188,17 +194,21 @@ export class SonosService {
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
     return this.guardSoap(coordinator.uuid, async () => {
-      const [position, transport] = await Promise.all([
+      const [position, transport, settings, crossfade, sleep] = await Promise.all([
         callSoap(coordinator.ipAddress, "AVTransport", "GetPositionInfo", { InstanceID: 0 }),
-        callSoap(coordinator.ipAddress, "AVTransport", "GetTransportInfo", { InstanceID: 0 })
+        callSoap(coordinator.ipAddress, "AVTransport", "GetTransportInfo", { InstanceID: 0 }),
+        callSoap(coordinator.ipAddress, "AVTransport", "GetTransportSettings", { InstanceID: 0 }),
+        callSoap(coordinator.ipAddress, "AVTransport", "GetCrossfadeMode", { InstanceID: 0 }),
+        callSoap(coordinator.ipAddress, "AVTransport", "GetRemainingSleepTimerDuration", { InstanceID: 0 })
       ]);
       const baseUrl = `http://${coordinator.ipAddress}:1400`;
       const item = firstDidlItem(position.TrackMetaData, baseUrl);
       const smapiMeta = await this.smapiTrackForUri(position.TrackURI);
+      const { repeat, shuffle } = parsePlayMode(settings.PlayMode);
       return {
         groupId,
         state: normalizePlaybackState(transport.CurrentTransportState),
-        title: smapiMeta?.title ?? item?.title ?? position.TrackURI ?? "Nothing playing",
+        title: smapiMeta?.title ?? item?.title ?? cleanTrackTitle(position.TrackURI),
         artist: smapiMeta?.artist ?? item?.artist,
         album: smapiMeta?.album ?? item?.album,
         albumArtUri: proxyArtUri(smapiMeta?.albumArtUri ?? item?.albumArtUri ?? albumArtFromPosition(position, baseUrl)),
@@ -206,9 +216,44 @@ export class SonosService {
         position: position.RelTime,
         playlistPosition: numericPosition(position.Track),
         uri: position.TrackURI,
+        repeat,
+        shuffle,
+        crossfade: crossfade.CrossfadeMode === "1",
+        sleepTimerSeconds: parseSonosDuration(sleep.RemainingSleepTimerDuration),
         updatedAt: new Date().toISOString()
       };
     });
+  }
+
+  async setSleepTimer(groupId: string, seconds: number): Promise<NowPlaying> {
+    const group = await this.requireGroup(groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    await callSoap(coordinator.ipAddress, "AVTransport", "ConfigureSleepTimer", {
+      InstanceID: 0,
+      // Empty string cancels the timer; otherwise HH:MM:SS.
+      NewSleepTimerDuration: seconds > 0 ? formatSonosDuration(seconds) : ""
+    });
+    return this.nowPlaying(groupId);
+  }
+
+  async setPlaybackMode(groupId: string, repeat: RepeatMode, shuffle: boolean): Promise<NowPlaying> {
+    const group = await this.requireGroup(groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    await callSoap(coordinator.ipAddress, "AVTransport", "SetPlayMode", {
+      InstanceID: 0,
+      NewPlayMode: toPlayMode(repeat, shuffle)
+    });
+    return this.nowPlaying(groupId);
+  }
+
+  async setCrossfade(groupId: string, enabled: boolean): Promise<NowPlaying> {
+    const group = await this.requireGroup(groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    await callSoap(coordinator.ipAddress, "AVTransport", "SetCrossfadeMode", {
+      InstanceID: 0,
+      CrossfadeMode: enabled ? 1 : 0
+    });
+    return this.nowPlaying(groupId);
   }
 
   // Map an x-sonos-http SMAPI URI back to source-track metadata. Cache-first;
@@ -219,11 +264,17 @@ export class SonosService {
     const key = `${parsed.sourceId}\n${parsed.trackId}`;
     const cached = this.smapiTrackMeta.get(key);
     if (cached) return cached;
+    // Skip re-fetching a key that failed recently (e.g. unavailable video) so polls
+    // don't hammer the source. Retried after the cooldown in case it was transient.
+    const missUntil = this.smapiTrackMisses.get(key);
+    if (missUntil !== undefined && missUntil > Date.now()) return undefined;
     try {
       const track = await fetchTrack(parsed.sourceId, parsed.trackId);
       this.smapiTrackMeta.set(key, track);
+      this.smapiTrackMisses.delete(key);
       return track;
     } catch {
+      this.smapiTrackMisses.set(key, Date.now() + SMAPI_MISS_COOLDOWN_MS);
       return undefined;
     }
   }
@@ -252,7 +303,7 @@ export class SonosService {
         const meta = this.smapiTrackFromCache(item.uri);
         return {
           ...item,
-          title: meta?.title ?? item.title,
+          title: meta?.title ?? cleanTrackTitle(item.title),
           artist: meta?.artist ?? item.artist,
           album: meta?.album ?? item.album,
           albumArtUri: proxyArtUri(meta?.albumArtUri ?? item.albumArtUri)
@@ -366,6 +417,42 @@ export class SonosService {
       DesiredMute: muted ? 1 : 0
     });
     return this.zoneVolume(zoneId);
+  }
+
+  async zoneEq(zoneId: string): Promise<EqState> {
+    const zone = await this.requireZone(zoneId);
+    return this.guardSoap(zone.uuid, async () => {
+      // Bass/Treble are master-only (no Channel arg); Loudness is per-channel.
+      const [bass, treble, loudness] = await Promise.all([
+        callSoap(zone.ipAddress, "RenderingControl", "GetBass", { InstanceID: 0 }),
+        callSoap(zone.ipAddress, "RenderingControl", "GetTreble", { InstanceID: 0 }),
+        callSoap(zone.ipAddress, "RenderingControl", "GetLoudness", { InstanceID: 0, Channel: "Master" })
+      ]);
+      return {
+        id: zone.id,
+        bass: clampEq(Number.parseInt(bass.CurrentBass ?? "0", 10)),
+        treble: clampEq(Number.parseInt(treble.CurrentTreble ?? "0", 10)),
+        loudness: loudness.CurrentLoudness === "1"
+      };
+    });
+  }
+
+  async setZoneEq(zoneId: string, payload: EqPayload): Promise<EqState> {
+    const zone = await this.requireZone(zoneId);
+    if (payload.bass !== undefined) {
+      await callSoap(zone.ipAddress, "RenderingControl", "SetBass", { InstanceID: 0, DesiredBass: clampEq(payload.bass) });
+    }
+    if (payload.treble !== undefined) {
+      await callSoap(zone.ipAddress, "RenderingControl", "SetTreble", { InstanceID: 0, DesiredTreble: clampEq(payload.treble) });
+    }
+    if (payload.loudness !== undefined) {
+      await callSoap(zone.ipAddress, "RenderingControl", "SetLoudness", {
+        InstanceID: 0,
+        Channel: "Master",
+        DesiredLoudness: payload.loudness ? 1 : 0
+      });
+    }
+    return this.zoneEq(zoneId);
   }
 
   async groupVolume(groupId: string): Promise<VolumeState> {
@@ -596,30 +683,47 @@ export class SonosService {
 
   async playSourceItems(options: { sourceId: string; trackIds: string[]; groupId: string; mode: PlaybackMode }): Promise<NowPlaying> {
     if (options.trackIds.length === 0) throw new Error("trackIds must be non-empty");
-    const group = await this.requireGroup(options.groupId);
+    // Single-source adapter over the mixed-source enqueue path (behavior identical).
+    return this.enqueueTrackRefs(
+      options.trackIds.map((trackId) => ({ sourceId: options.sourceId, trackId })),
+      options.groupId,
+      options.mode
+    );
+  }
+
+  /** Enqueue an ordered list of tracks that may span multiple sources (e.g. a playlist). */
+  async playTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode): Promise<NowPlaying> {
+    if (refs.length === 0) throw new Error("No tracks to play");
+    return this.enqueueTrackRefs(refs, groupId, mode);
+  }
+
+  private async enqueueTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode): Promise<NowPlaying> {
+    if (refs.length === 0) throw new Error("trackIds must be non-empty");
+    const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
-    const tracks = await Promise.all(options.trackIds.map((trackId) => fetchTrack(options.sourceId, trackId)));
+    const tracks = await Promise.all(refs.map((ref) => fetchTrack(ref.sourceId, ref.trackId)));
     tracks.forEach((track, index) => {
-      this.smapiTrackMeta.set(`${options.sourceId}\n${options.trackIds[index]}`, track);
+      this.smapiTrackMeta.set(`${refs[index].sourceId}\n${refs[index].trackId}`, track);
     });
     const bridgeHost = this.publicHost();
     if (!bridgeHost) throw new Error("Could not determine bridge LAN IP for stream proxy");
     const queueItems = tracks.map((track, index) => {
+      const ref = refs[index];
       const ext = extensionForMime(track.mimeType);
       const titleSlug = urlSafeSlug(track.title);
-      const proxyUrl = `http://${bridgeHost}:${this.config.port}/api/stream/${encodeURIComponent(options.sourceId)}/${encodeURIComponent(options.trackIds[index])}/${titleSlug}${ext}`;
+      const proxyUrl = `http://${bridgeHost}:${this.config.port}/api/stream/${encodeURIComponent(ref.sourceId)}/${encodeURIComponent(ref.trackId)}/${titleSlug}${ext}`;
       // For sources registered as a Sonos SMAPI custom service (sid 240 by
       // default), use an x-sonos-http URI so Sonos calls our SMAPI endpoint
       // for the actual URL + metadata. Required for non-mp3 streams
       // (audio/mp4) where S1 ignores DIDL on plain http URIs.
-      const smapi = SMAPI_SOURCE_INFO[options.sourceId];
+      const smapi = SMAPI_SOURCE_INFO[ref.sourceId];
       if (smapi) {
         // sid here is the raw sid in the URI; serviceTokenMagic (sid*256) is
         // what goes into the <desc> SA_RINCON binding, not the URI sid.
-        const smapiUri = `x-sonos-http:${encodeURIComponent(options.trackIds[index])}${ext}?sid=${smapi.sid}&flags=8224&sn=${smapi.sn}`;
+        const smapiUri = `x-sonos-http:${encodeURIComponent(ref.trackId)}${ext}?sid=${smapi.sid}&flags=8224&sn=${smapi.sn}`;
         const metadata = buildSmapiDidl({
           ...track,
-          id: options.trackIds[index],
+          id: ref.trackId,
           url: smapiUri
         }, smapi);
         return { uri: smapiUri, metadata };
@@ -628,7 +732,7 @@ export class SonosService {
       return { uri: proxyUrl, metadata: buildDidl(proxiedTrack) };
     });
 
-    if (options.mode === "replace") {
+    if (mode === "replace") {
       await callSoap(coordinator.ipAddress, "AVTransport", "RemoveAllTracksFromQueue", { InstanceID: 0 });
       for (const item of queueItems) {
         await callSoap(coordinator.ipAddress, "AVTransport", "AddURIToQueue", {
@@ -646,7 +750,7 @@ export class SonosService {
       });
       await callSoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: "1" });
       await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
-    } else if (options.mode === "next") {
+    } else if (mode === "next") {
       // EnqueueAsNext=1 alone isn't reliable on Sonos S1 — it can append. Read
       // the current track number and insert explicitly at currentTrack+1.
       const position = await callSoap(coordinator.ipAddress, "AVTransport", "GetPositionInfo", { InstanceID: 0 });
@@ -676,7 +780,47 @@ export class SonosService {
       }
     }
 
-    return this.nowPlaying(options.groupId);
+    return this.nowPlaying(groupId);
+  }
+
+  /** Parse the current queue back into source track refs (for "save queue as playlist"). */
+  async queueTrackRefs(groupId: string): Promise<{ items: Array<{ sourceId: string; trackId: string; title: string; artist: string | null; album: string | null }>; skipped: number }> {
+    const queue = await this.queue(groupId);
+    const items: Array<{ sourceId: string; trackId: string; title: string; artist: string | null; album: string | null }> = [];
+    let skipped = 0;
+    for (const entry of queue) {
+      const ref = this.queueUriToRef(entry.uri);
+      if (!ref) {
+        skipped++;
+        continue;
+      }
+      items.push({
+        sourceId: ref.sourceId,
+        trackId: ref.trackId,
+        title: entry.title,
+        artist: entry.artist ?? null,
+        album: entry.album ?? null
+      });
+    }
+    return { items, skipped };
+  }
+
+  /** Recover {sourceId, trackId} from a queue item URI (SMAPI x-sonos-http or our stream-proxy URL). */
+  private queueUriToRef(uri: string | undefined): { sourceId: string; trackId: string } | undefined {
+    if (!uri) return undefined;
+    const smapi = parseSmapiUri(uri);
+    if (smapi) return smapi;
+    let pathname = uri;
+    if (/^https?:\/\//i.test(uri)) {
+      try {
+        pathname = new URL(uri).pathname;
+      } catch {
+        return undefined;
+      }
+    }
+    const match = pathname.match(/^\/api\/stream\/([^/]+)\/([^/]+?)(?:\.[A-Za-z0-9]{2,5})?(?:\/[^/]+)?$/);
+    if (!match) return undefined;
+    return { sourceId: decodeURIComponent(match[1]), trackId: decodeURIComponent(match[2]) };
   }
 
   listCustomServicePresets(): CustomServicePresetView[] {
@@ -843,11 +987,60 @@ export class SonosService {
   }
 }
 
+// Never surface a raw playback URI as a track title (happens when source metadata
+// can't be resolved, e.g. an unavailable video). Show a friendly placeholder instead.
+function cleanTrackTitle(value: string | undefined): string {
+  if (!value) return "Nothing playing";
+  if (/^(?:x-sonos-http|x-sonosapi-stream|x-rincon|https?):/i.test(value)) return "Unknown track";
+  return value;
+}
+
 function normalizePlaybackState(value: string | undefined): PlaybackState {
   if (value === "PLAYING" || value === "PAUSED_PLAYBACK" || value === "STOPPED" || value === "TRANSITIONING" || value === "NO_MEDIA_PRESENT") {
     return value;
   }
   return "UNKNOWN";
+}
+
+// GetRemainingSleepTimerDuration returns "H:MM:SS" (or "" when off).
+function parseSonosDuration(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parts = value.split(":").map((part) => Number.parseInt(part, 10));
+  if (parts.some((part) => Number.isNaN(part))) return undefined;
+  let seconds = 0;
+  for (const part of parts) seconds = seconds * 60 + part;
+  return seconds > 0 ? seconds : undefined;
+}
+
+function formatSonosDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+// Sonos combines repeat + shuffle into a single AVTransport PlayMode string.
+function parsePlayMode(value: string | undefined): { repeat: RepeatMode; shuffle: boolean } {
+  switch (value) {
+    case "REPEAT_ALL": return { repeat: "all", shuffle: false };
+    case "REPEAT_ONE": return { repeat: "one", shuffle: false };
+    case "SHUFFLE_NOREPEAT": return { repeat: "none", shuffle: true };
+    case "SHUFFLE": return { repeat: "all", shuffle: true };
+    case "SHUFFLE_REPEAT_ONE": return { repeat: "one", shuffle: true };
+    default: return { repeat: "none", shuffle: false }; // NORMAL / unknown
+  }
+}
+
+function toPlayMode(repeat: RepeatMode, shuffle: boolean): string {
+  if (shuffle) {
+    if (repeat === "all") return "SHUFFLE";
+    if (repeat === "one") return "SHUFFLE_REPEAT_ONE";
+    return "SHUFFLE_NOREPEAT";
+  }
+  if (repeat === "all") return "REPEAT_ALL";
+  if (repeat === "one") return "REPEAT_ONE";
+  return "NORMAL";
 }
 
 function numericPosition(value: string | undefined): number | undefined {
@@ -858,6 +1051,11 @@ function numericPosition(value: string | undefined): number | undefined {
 function clampVolume(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function clampEq(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(-10, Math.min(10, Math.round(value)));
 }
 
 function albumArtFromPosition(position: Record<string, string>, baseUrl: string): string | undefined {
