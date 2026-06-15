@@ -1,0 +1,55 @@
+MiSonos
+Copyright 2026 agtilden (https://github.com/agtilden/misonos)
+
+This product is licensed under the PolyForm Noncommercial License 1.0.0.
+See the LICENSE.md file for the full terms.
+
+Required Notice: Copyright 2026 agtilden (https://github.com/agtilden/misonos)
+
+--------------------------------------------------------------------------------
+Trademarks and affiliation
+--------------------------------------------------------------------------------
+
+MiSonos is an independent, fan-made controller. It is NOT affiliated with,
+endorsed by, sponsored by, or associated with any of the companies, services,
+artists, or organizations it interoperates with.
+
+All product names, logos, service names, and brands are property of their
+respective owners, including but not limited to:
+
+  - Sonos (Sonos, Inc.)
+  - YouTube and YouTube Music (Google LLC)
+  - Apple Podcasts and the iTunes Search API (Apple Inc.)
+  - Grateful Dead (Grateful Dead Productions / Rhino Entertainment)
+  - Phish (Phish, Inc.) and phish.in
+  - the Internet Archive and the Live Music Archive / etree.org
+
+Use of these names is for identification and interoperability only and does not
+imply any endorsement. The service emblems shipped under
+apps/web/public/source-icons/ are original, brand-coloured glyphs created for
+this project — they are NOT the trademarked logos of those services.
+
+--------------------------------------------------------------------------------
+Third-party data sources
+--------------------------------------------------------------------------------
+
+MiSonos retrieves content from third-party services at the user's direction.
+Users are responsible for complying with each service's terms of use:
+
+  - YouTube Music: accessed via the user's own pasted browser cookies; this may
+    be subject to YouTube's Terms of Service.
+  - Internet Archive Live Music Archive (etree) and Grateful Dead collection.
+  - phish.in API.
+  - Podcast Index (https://podcastindex.org) and the Apple Podcasts directory
+    for podcast discovery; episodes are played from each podcast's own RSS feed.
+  - Apple iTunes Search API for cover-art lookups.
+
+--------------------------------------------------------------------------------
+Open-source components
+--------------------------------------------------------------------------------
+
+This project depends on third-party open-source software, including (among
+others) React, Vite, TypeScript, youtubei.js, better-sqlite3, kysely,
+fast-xml-parser, lucide-react, and Caddy. Each is distributed under its own
+license; see the respective package manifests (package.json / node_modules) for
+the authoritative list and license texts.
