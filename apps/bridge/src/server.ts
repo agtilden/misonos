@@ -346,8 +346,10 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
     if (preferenceMatch) {
       const key = decodeURIComponent(preferenceMatch[1]);
       if (request.method === "GET") {
+        // Return 200 with a null value for an unset preference (an unset pref is normal
+        // on first load) so the client falls back to its local cache without a 404.
         const pref = await store.getPreference(key);
-        return pref ? json(response, pref) : json(response, { error: "Not found" }, 404);
+        return json(response, pref ?? { key, value: null, updatedAt: "" });
       }
       if (request.method === "POST") {
         const body = await readJson<{ value: unknown }>(request);
