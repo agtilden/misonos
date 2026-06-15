@@ -791,9 +791,16 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   }, [stack]);
   useEffect(() => {
     const onAuthChange = (event: Event) => {
-      const detail = (event as CustomEvent<{ sourceId?: string }>).detail;
-      if (!detail?.sourceId || detail.sourceId === sourceId) {
-        // Auth changed (e.g. cookies pasted) — drop cached anonymous results.
+      const changed = (event as CustomEvent<{ sourceId?: string }>).detail?.sourceId;
+      // Evict the changed source's cached entries regardless of what's currently
+      // selected, so switching back to it doesn't serve a stale (pre-auth-change)
+      // list. Only force an immediate refetch when that source is on screen.
+      if (changed) {
+        for (const key of [...browseCache.current.keys()]) {
+          if (key.startsWith(`${changed}:`)) browseCache.current.delete(key);
+        }
+        if (changed === sourceId) setRefreshNonce((n) => n + 1);
+      } else {
         browseCache.current.clear();
         setRefreshNonce((n) => n + 1);
       }
