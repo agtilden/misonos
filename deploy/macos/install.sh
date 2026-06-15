@@ -100,8 +100,15 @@ PLIST
 echo "Installing dependencies (picks up any new packages from a pull)"
 ( cd "$REPO" && npm install ) >/dev/null
 
-echo "Building the bridge (dist) so the bundle can run it directly"
-( cd "$REPO" && npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge ) >/dev/null
+# Build the bridge AND the web app. run.sh serves the web via `vite preview`,
+# which serves a PRE-BUILT apps/web/dist and does NOT build — so without this the
+# deployed UI is whatever was last built and silently lags the code (e.g. a pulled
+# feature's new panel is missing). Rebuild it every deploy.
+echo "Building the bridge (dist) and the web app so the bundle serves current code"
+( cd "$REPO" \
+    && npm run build -w @misonos/sonos-protocol \
+    && npm run build -w @misonos/bridge \
+    && npm run build -w @misonos/web ) >/dev/null
 
 mkdir -p "$APP/Contents/Resources"
 RUN_SH="$APP/Contents/Resources/run.sh"

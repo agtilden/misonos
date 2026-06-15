@@ -140,6 +140,17 @@ lsof -nP -iTCP:4323 -sTCP:LISTEN                  # podcast listening? (swap por
 ( cd ~/Documents/projects/misonos && npm install ) # if a dep is missing
 ```
 
+**The web UI looks out of date (a panel/feature is missing).** The web app is
+served by `vite preview` on :4173, which serves the pre-built `apps/web/dist` and
+does **not** rebuild. `install.sh` builds it every deploy — but if you ever start
+the stack without re-running the installer, the served UI is stale. Rebuild and
+relaunch:
+
+```sh
+( cd ~/Documents/projects/misonos && npm run build -w @misonos/web )
+pkill -f 'vite preview'; open ~/Applications/MiSonos.app   # or just re-run install.sh
+```
+
 **Re-granting after an update.** The Local Network grant is tied to the bundle's
 code hash (ad-hoc signature → identity *is* the cdhash). Any change to `run.sh`
 or the launcher — i.e. most updates — produces a new hash, so macOS may drop the
