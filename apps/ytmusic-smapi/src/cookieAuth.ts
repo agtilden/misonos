@@ -110,6 +110,15 @@ export async function clearCookies(): Promise<CookieAuthStatus> {
   return cookieAuthStatus();
 }
 
+// Drop credentials when YouTube rejects them (401/403) so the UI stops reporting
+// "connected" and serving authed requests with dead cookies. The user re-pastes.
+export function invalidateCookieAuth(): void {
+  if (!creds) return;
+  creds = null;
+  void rm(COOKIES_PATH, { force: true }).catch(() => undefined);
+  console.warn("[ytmusic] cookie auth rejected (401/403) — cleared; re-paste cookies to reconnect");
+}
+
 export async function restoreCookies(): Promise<void> {
   try {
     const data = await readFile(COOKIES_PATH, "utf8");

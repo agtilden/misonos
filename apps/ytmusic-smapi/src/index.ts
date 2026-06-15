@@ -3,7 +3,9 @@ import { createServer } from "./server.js";
 import { restoreCookies } from "./cookieAuth.js";
 
 const config = loadConfig();
-void restoreCookies();
+// Restore saved cookies BEFORE accepting requests, so the first browse of the
+// YouTube Music root isn't served (and cached by the web) as anonymous.
+await restoreCookies();
 const server = createServer(config);
 
 server.listen(config.port, config.host, () => {

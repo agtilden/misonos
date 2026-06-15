@@ -1,4 +1,4 @@
-import { cookieAuthHeaders } from "./cookieAuth.js";
+import { cookieAuthHeaders, invalidateCookieAuth } from "./cookieAuth.js";
 
 const YTM_DOMAIN = "https://music.youtube.com";
 const YTM_API_BASE = `${YTM_DOMAIN}/youtubei/v1/`;
@@ -57,6 +57,7 @@ export async function ytmPost(endpoint: string, body: AnyRec, opts?: { authed?: 
   // Attach the user's pasted cookies + SAPISIDHASH only for personalized calls
   // (library, home, radios); public browse/search stays anonymous.
   const authHeaders = opts?.authed ? cookieAuthHeaders() : {};
+  const sentAuth = Object.keys(authHeaders).length > 0;
   const response = await fetch(`${YTM_API_BASE}${endpoint}?alt=json`, {
     method: "POST",
     headers: {
@@ -74,6 +75,9 @@ export async function ytmPost(endpoint: string, body: AnyRec, opts?: { authed?: 
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
+    // Cookies were rejected — drop them so we stop reporting "connected" and stop
+    // sending dead credentials; the caller falls back to anonymous.
+    if (sentAuth && (response.status === 401 || response.status === 403)) invalidateCookieAuth();
     const text = await response.text();
     throw new Error(`YT Music ${response.status} on ${endpoint}: ${text.slice(0, 300)}`);
   }
