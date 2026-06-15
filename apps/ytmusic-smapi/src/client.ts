@@ -1,5 +1,6 @@
 import { createContext, Script } from "node:vm";
 import { Innertube, Log, Platform } from "youtubei.js";
+import { getCookieString } from "./cookieAuth.js";
 
 // Silence non-fatal parser warnings (TicketEvent submenu types YT keeps adding).
 // Real failures still throw and reach our endpoint handlers.
@@ -46,6 +47,25 @@ export async function getClient(): Promise<Innertube> {
   return initPromise;
 }
 
+let authedClient: Innertube | undefined;
+let authedCookieKey: string | undefined;
+
+// A youtubei.js client carrying the pasted cookies, rebuilt if the cookie changes.
+// Used only as a stream fallback for signed-in-only content (podcast episodes).
+async function getAuthedClient(): Promise<Innertube | null> {
+  const cookie = getCookieString();
+  if (!cookie) return null;
+  if (authedClient && authedCookieKey === cookie) return authedClient;
+  try {
+    authedClient = await Innertube.create({ retrieve_player: true, cookie });
+    authedCookieKey = cookie;
+    return authedClient;
+  } catch (error) {
+    console.warn(`[ytmusic] failed to build authed client: ${error instanceof Error ? error.message : error}`);
+    return null;
+  }
+}
+
 interface RawSongResult {
   id?: string;
   title?: string | { text?: string };
@@ -68,12 +88,27 @@ export async function searchSongs(query: string, limit = 30): Promise<YtmSearchT
 }
 
 export async function getStreamUrl(videoId: string): Promise<YtmStreamInfo> {
-  const yt = await getClient();
   // The default WEB client requires a Proof-of-Origin token before googlevideo will
   // serve audio. Try alternate clients that historically don't need PO tokens, and
   // validate each candidate URL with a HEAD request before returning it.
+  const anon = await getClient();
+  const fromAnon = await resolveStream(anon, videoId, "anon");
+  if (fromAnon.url) return { url: fromAnon.url, mimeType: fromAnon.mimeType };
+
+  // Podcast episodes (and some gated tracks) only resolve for a signed-in session,
+  // so retry with an authenticated client built from the pasted cookies.
+  const authed = await getAuthedClient();
+  if (authed) {
+    const fromAuthed = await resolveStream(authed, videoId, "authed");
+    if (fromAuthed.url) return { url: fromAuthed.url, mimeType: fromAuthed.mimeType };
+    if (fromAuthed.error) throw fromAuthed.error;
+  }
+  throw fromAnon.error ?? new Error("All stream clients failed");
+}
+
+async function resolveStream(yt: Innertube, videoId: string, label: string): Promise<{ url?: string; mimeType?: string; error?: Error }> {
   const clientsToTry = ["TV_EMBEDDED", "TV_SIMPLY", "ANDROID_VR", "IOS", "ANDROID", "WEB_EMBEDDED"] as const;
-  let lastError: unknown;
+  let lastError: Error | undefined;
   for (const client of clientsToTry) {
     try {
       const info = await yt.getInfo(videoId, { client });
@@ -81,16 +116,16 @@ export async function getStreamUrl(videoId: string): Promise<YtmStreamInfo> {
       if (!format) continue;
       const decipheredUrl = await format.decipher(yt.session.player);
       if (await urlIsPlayable(decipheredUrl)) {
-        console.log(`[ytmusic] using client=${client}`);
+        console.log(`[ytmusic] using client=${client} (${label})`);
         return { url: decipheredUrl, mimeType: format.mime_type ?? "audio/mp4" };
       }
-      console.log(`[ytmusic] client=${client} returned URL that failed HEAD`);
+      console.log(`[ytmusic] client=${client} (${label}) returned URL that failed HEAD`);
     } catch (error) {
-      lastError = error;
-      console.log(`[ytmusic] client=${client} errored: ${error instanceof Error ? error.message : String(error)}`);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.log(`[ytmusic] client=${client} (${label}) errored: ${lastError.message}`);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("All stream clients failed");
+  return { error: lastError };
 }
 
 async function urlIsPlayable(url: string): Promise<boolean> {

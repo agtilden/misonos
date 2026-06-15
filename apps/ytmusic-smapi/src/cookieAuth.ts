@@ -29,6 +29,12 @@ export function hasCookieAuth(): boolean {
   return creds !== null;
 }
 
+// Raw cookie string, for building an authenticated youtubei.js client (podcast
+// episodes only stream for a signed-in session).
+export function getCookieString(): string | null {
+  return creds?.cookie ?? null;
+}
+
 // Build the auth headers for an authenticated YTM request, or {} when not signed in.
 export function cookieAuthHeaders(): Record<string, string> {
   if (!creds) return {};
