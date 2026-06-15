@@ -9,6 +9,9 @@ const MEMORY_CACHE_MAX = 256;
 const DISK_CACHE_MAX_BYTES = 200 * 1024 * 1024;
 const EVICT_EVERY = 50;
 const FETCH_TIMEOUT_MS = 8000;
+// `/api/art?u=` accepts arbitrary URLs, so cap a single upstream response well below
+// the disk-cache ceiling — abort once exceeded so a huge "image" can't spike memory.
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
 interface CachedArt { buf: Buffer; contentType: string }
 const memoryCache = new Map<string, CachedArt>();
@@ -76,8 +79,15 @@ async function fetchImage(target: string): Promise<CachedArt | undefined> {
       signal: controller.signal
     });
     if (!upstream.ok) return undefined;
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    if (buf.length === 0) return undefined;
+    // Reject oversized responses up front when the server declares a length…
+    const declared = Number(upstream.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_IMAGE_BYTES) {
+      controller.abort();
+      return undefined;
+    }
+    // …and enforce the cap while streaming, in case Content-Length is absent or lies.
+    const buf = await readCapped(upstream, controller);
+    if (!buf || buf.length === 0) return undefined;
     const contentType = upstream.headers.get("content-type")?.split(";")[0] || detectImageType(buf);
     if (!contentType.startsWith("image/")) return undefined;
     return { buf, contentType };
@@ -86,6 +96,30 @@ async function fetchImage(target: string): Promise<CachedArt | undefined> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Stream the response body, aborting as soon as it exceeds the per-image cap so an
+// unbounded upstream can never be fully buffered into memory.
+async function readCapped(upstream: Response, controller: AbortController): Promise<Buffer | undefined> {
+  if (!upstream.body) {
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    return buf.length > MAX_IMAGE_BYTES ? undefined : buf;
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.length;
+      if (total > MAX_IMAGE_BYTES) {
+        controller.abort();
+        return undefined;
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+  } catch {
+    return undefined;
+  }
+  return Buffer.concat(chunks);
 }
 
 function send(response: http.ServerResponse, art: CachedArt, isHead: boolean, cacheState: string): void {
