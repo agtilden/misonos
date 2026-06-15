@@ -1,6 +1,6 @@
 import type { SourceBrowseItem, SourceBrowseResponse } from "@misonos/sonos-protocol";
 import { encodeId, decodeId, type YtmId } from "./ids.js";
-import { browseMusic, headerThumbnail, nextPlaylist, panelTracks, parseShelves, parseShelfItem, searchMusic, type ParsedItem, type ParsedShelf } from "./ytmApi.js";
+import { browseMusic, headerThumbnail, nextContinuation, nextPlaylist, panelContinuation, panelTracks, parseShelves, parseShelfItem, searchMusic, type ParsedItem, type ParsedShelf } from "./ytmApi.js";
 import { hasCookieAuth } from "./cookieAuth.js";
 
 export async function browse(rawId: string): Promise<SourceBrowseResponse> {
@@ -251,11 +251,28 @@ async function playlistTracks(playlistId: string, authed = false): Promise<Sourc
   }
 }
 
+const RADIO_TARGET = 100;
+
 async function radioTracks(playlistId: string): Promise<SourceBrowseItem[]> {
   try {
-    const response = await nextPlaylist(playlistId);
+    let response = await nextPlaylist(playlistId);
+    const parsed: ParsedItem[] = [...panelTracks(response)];
+    let cont = panelContinuation(response);
+    // The first watch-next page is small (~10-25); page through continuations.
+    for (let page = 0; cont && parsed.length < RADIO_TARGET && page < 8; page++) {
+      response = await nextContinuation(cont);
+      const more = panelTracks(response);
+      if (more.length === 0) break;
+      parsed.push(...more);
+      cont = panelContinuation(response);
+    }
+    const seen = new Set<string>();
     const out: SourceBrowseItem[] = [];
-    for (const item of panelTracks(response)) {
+    for (const item of parsed) {
+      if (item.videoId) {
+        if (seen.has(item.videoId)) continue;
+        seen.add(item.videoId);
+      }
       const converted = toSourceItem(item, undefined);
       if (converted) out.push(converted);
     }

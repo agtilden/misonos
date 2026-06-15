@@ -929,6 +929,41 @@ h2 {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* Pinned to the right so it stays reachable while the crumb trail scrolls. */
+.browse-crumb-refresh {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: #1f2322;
+  border: none;
+  color: rgba(242, 240, 232, 0.6);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.browse-crumb-refresh:hover {
+  color: #f2f0e8;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.browse-crumb-refresh:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.spin {
+  animation: misonos-spin 0.8s linear infinite;
+}
+
+@keyframes misonos-spin {
+  to { transform: rotate(360deg); }
+}
+
 .browse-bulk {
   display: flex;
   align-items: center;

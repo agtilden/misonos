@@ -100,12 +100,22 @@ export async function nextPlaylist(playlistId: string, videoId?: string): Promis
   return ytmPost("next", body, { authed: true });
 }
 
-export function panelTracks(response: unknown): ParsedItem[] {
-  const contents = nav(response, [
+// Fetch a further page of a radio panel using a continuation token.
+export async function nextContinuation(continuation: string): Promise<AnyRec> {
+  return ytmPost("next", { continuation, isAudioOnly: true }, { authed: true });
+}
+
+function playlistPanel(response: unknown): unknown {
+  return nav(response, [
     "contents", "singleColumnMusicWatchNextResultsRenderer", "tabbedRenderer",
     "watchNextTabbedResultsRenderer", "tabs", 0, "tabRenderer", "content",
-    "musicQueueRenderer", "content", "playlistPanelRenderer", "contents"
-  ]) as unknown[] | undefined;
+    "musicQueueRenderer", "content", "playlistPanelRenderer"
+  ]) ?? nav(response, ["continuationContents", "playlistPanelContinuation"]);
+}
+
+export function panelTracks(response: unknown): ParsedItem[] {
+  const panel = playlistPanel(response);
+  const contents = nav(panel, ["contents"]) as unknown[] | undefined;
   if (!Array.isArray(contents)) return [];
   const out: ParsedItem[] = [];
   for (const raw of contents) {
@@ -127,6 +137,14 @@ export function panelTracks(response: unknown): ParsedItem[] {
     });
   }
   return out;
+}
+
+// The token to fetch the next page of a radio panel, if any.
+export function panelContinuation(response: unknown): string | undefined {
+  const panel = playlistPanel(response);
+  const token = nav(panel, ["continuations", 0, "nextRadioContinuationData", "continuation"])
+    ?? nav(panel, ["continuations", 0, "nextContinuationData", "continuation"]);
+  return typeof token === "string" ? token : undefined;
 }
 
 export interface TrackInfo {
@@ -285,6 +303,12 @@ function parseTwoRow(node: unknown): ParsedItem | null {
     // A tile that points at a playlist/radio with no track (e.g. a Supermix).
     if (playlistId) return { kind: "playlist", title, subtitle: subtitleParts.join(" · ") || undefined, playlistId };
     return null;
+  }
+  // Supermix / radio tiles navigate via a watchPlaylistEndpoint instead.
+  const watchPlaylist = nav(node, ["navigationEndpoint", "watchPlaylistEndpoint"]);
+  if (watchPlaylist) {
+    const playlistId = (watchPlaylist as AnyRec).playlistId as string | undefined;
+    if (playlistId) return { kind: "playlist", title, subtitle: subtitleParts.join(" · ") || undefined, playlistId };
   }
   return null;
 }

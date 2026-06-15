@@ -1091,6 +1091,18 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
             <button type="button" onClick={() => pop(index + 1)}>{crumb.title}</button>
           </span>
         ))}
+        {stack.length > 0 ? (
+          <button
+            type="button"
+            className="browse-crumb-refresh"
+            title="Refresh"
+            aria-label="Refresh"
+            disabled={loading}
+            onClick={() => setRefreshNonce((nonce) => nonce + 1)}
+          >
+            <RefreshCw size={14} className={loading ? "spin" : undefined} />
+          </button>
+        ) : null}
       </nav>
 
       {error ? (
