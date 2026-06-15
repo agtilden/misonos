@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import type { Alarm, AlarmInput, AlarmProgram, AlarmRecurrence, SonosZone } from "@misonos/sonos-protocol";
 import { bridgeApi } from "./api.js";
 
@@ -92,17 +92,23 @@ export function Alarms({ zones }: AlarmsProps) {
             </ul>
           )}
 
-          {editing !== null ? (
+        </>
+      )}
+
+      {editing !== null ? (
+        <div className="eq-modal-backdrop" role="presentation" onClick={() => setEditing(null)}>
+          <div className="eq-modal" role="dialog" aria-modal="true" aria-label={editing === "new" ? "New alarm" : "Edit alarm"} onClick={(event) => event.stopPropagation()}>
             <AlarmForm
+              key={editing === "new" ? "new" : editing.id}
               zones={zones}
               alarm={editing === "new" ? null : editing}
               busy={busy}
               onCancel={() => setEditing(null)}
               onSubmit={(input) => void submit(input)}
             />
-          ) : null}
-        </>
-      )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -150,7 +156,10 @@ function AlarmForm({ zones, alarm, busy, onCancel, onSubmit }: AlarmFormProps) {
 
   return (
     <div className="alarm-form">
-      <h3>{alarm ? "Edit alarm" : "New alarm"}</h3>
+      <div className="section-heading">
+        <h2 className="eq-modal-title">{alarm ? "Edit alarm" : "New alarm"}</h2>
+        <button type="button" className="icon-button compact" aria-label="Close" onClick={onCancel}><X size={16} /></button>
+      </div>
 
       <label className="pref-row">
         <span className="pref-label"><strong>Time</strong></span>
