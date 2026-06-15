@@ -6,6 +6,7 @@ import { getTrackInfo } from "./ytmApi.js";
 import { decodeId, encodeId } from "./ids.js";
 import { browse as runBrowse, runSearch as runTypedSearch } from "./browse.js";
 import { currentStatus, signOut, startSignIn } from "./auth.js";
+import { clearCookies, cookieAuthStatus, setCookiesFromPaste } from "./cookieAuth.js";
 import { dispatch as smapiDispatch } from "./smapi.js";
 import { parseSoapRequest, soapFault } from "./soap.js";
 
@@ -43,7 +44,19 @@ export function createServer(config: YtmConfig): http.Server {
       }
       if (request.method === "GET" && url.pathname === "/auth/status") {
         await getClient();
-        return sendJson(response, 200, currentStatus());
+        // Merge the OAuth state with the pasted-cookie state so the UI can show both.
+        return sendJson(response, 200, { ...currentStatus(), ...cookieAuthStatus() });
+      }
+      if (request.method === "POST" && url.pathname === "/auth/cookies") {
+        const raw = await readBody(request);
+        try {
+          return sendJson(response, 200, { ...currentStatus(), ...(await setCookiesFromPaste(raw)) });
+        } catch (error) {
+          return sendJson(response, 400, { error: error instanceof Error ? error.message : "Invalid paste" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/auth/cookies/clear") {
+        return sendJson(response, 200, { ...currentStatus(), ...(await clearCookies()) });
       }
       if (request.method === "POST" && url.pathname === "/auth/start") {
         const yt = await getClient();

@@ -1,3 +1,5 @@
+import { cookieAuthHeaders, invalidateCookieAuth } from "./cookieAuth.js";
+
 const YTM_DOMAIN = "https://music.youtube.com";
 const YTM_API_BASE = `${YTM_DOMAIN}/youtubei/v1/`;
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0";
@@ -38,7 +40,7 @@ async function getVisitorId(): Promise<string> {
   return visitorIdPromise;
 }
 
-export async function ytmPost(endpoint: string, body: AnyRec): Promise<AnyRec> {
+export async function ytmPost(endpoint: string, body: AnyRec, opts?: { authed?: boolean }): Promise<AnyRec> {
   const visitor = await getVisitorId();
   const payload = {
     ...body,
@@ -52,6 +54,10 @@ export async function ytmPost(endpoint: string, body: AnyRec): Promise<AnyRec> {
       user: { lockedSafetyMode: false }
     }
   };
+  // Attach the user's pasted cookies + SAPISIDHASH only for personalized calls
+  // (library, home, radios); public browse/search stays anonymous.
+  const authHeaders = opts?.authed ? cookieAuthHeaders() : {};
+  const sentAuth = Object.keys(authHeaders).length > 0;
   const response = await fetch(`${YTM_API_BASE}${endpoint}?alt=json`, {
     method: "POST",
     headers: {
@@ -63,27 +69,86 @@ export async function ytmPost(endpoint: string, body: AnyRec): Promise<AnyRec> {
       "Referer": `${YTM_DOMAIN}/`,
       "X-Goog-Visitor-Id": visitor,
       "X-YouTube-Client-Name": "67",
-      "X-YouTube-Client-Version": todayClientVersion()
+      "X-YouTube-Client-Version": todayClientVersion(),
+      ...authHeaders
     },
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
+    // Cookies were rejected — drop them so we stop reporting "connected" and stop
+    // sending dead credentials; the caller falls back to anonymous.
+    if (sentAuth && (response.status === 401 || response.status === 403)) invalidateCookieAuth();
     const text = await response.text();
     throw new Error(`YT Music ${response.status} on ${endpoint}: ${text.slice(0, 300)}`);
   }
   return response.json() as Promise<AnyRec>;
 }
 
-export async function browseMusic(browseId: string, params?: string): Promise<AnyRec> {
+export async function browseMusic(browseId: string, params?: string, opts?: { authed?: boolean }): Promise<AnyRec> {
   const body: AnyRec = { browseId };
   if (params) body.params = params;
-  return ytmPost("browse", body);
+  return ytmPost("browse", body, opts);
 }
 
 export async function searchMusic(query: string, params?: string): Promise<AnyRec> {
   const body: AnyRec = { query };
   if (params) body.params = params;
   return ytmPost("search", body);
+}
+
+// Enumerate a radio/auto playlist (e.g. a Supermix, id starts with "RD") via the
+// watch-next endpoint — these don't resolve through the regular VL browse path.
+export async function nextPlaylist(playlistId: string, videoId?: string): Promise<AnyRec> {
+  const body: AnyRec = { playlistId, isAudioOnly: true };
+  if (videoId) body.videoId = videoId;
+  return ytmPost("next", body, { authed: true });
+}
+
+// Fetch a further page of a radio panel using a continuation token.
+export async function nextContinuation(continuation: string): Promise<AnyRec> {
+  return ytmPost("next", { continuation, isAudioOnly: true }, { authed: true });
+}
+
+function playlistPanel(response: unknown): unknown {
+  return nav(response, [
+    "contents", "singleColumnMusicWatchNextResultsRenderer", "tabbedRenderer",
+    "watchNextTabbedResultsRenderer", "tabs", 0, "tabRenderer", "content",
+    "musicQueueRenderer", "content", "playlistPanelRenderer"
+  ]) ?? nav(response, ["continuationContents", "playlistPanelContinuation"]);
+}
+
+export function panelTracks(response: unknown): ParsedItem[] {
+  const panel = playlistPanel(response);
+  const contents = nav(panel, ["contents"]) as unknown[] | undefined;
+  if (!Array.isArray(contents)) return [];
+  const out: ParsedItem[] = [];
+  for (const raw of contents) {
+    const r = nav(raw, ["playlistPanelVideoRenderer"]);
+    if (!r) continue;
+    const title = textRun(nav(r, ["title"]));
+    const videoId = nav(r, ["videoId"]) as string | undefined;
+    if (!title || !videoId) continue;
+    const bylineRuns = nav(r, ["shortBylineText", "runs"]) ?? nav(r, ["longBylineText", "runs"]);
+    const artist = Array.isArray(bylineRuns) && bylineRuns.length > 0 ? (bylineRuns[0] as AnyRec).text as string | undefined : undefined;
+    const durText = textRun(nav(r, ["lengthText"]));
+    out.push({
+      kind: "song",
+      title,
+      videoId,
+      artist,
+      durationSeconds: durText ? parseDuration(durText) : undefined,
+      thumbnailUrl: thumbnailFrom(r)
+    });
+  }
+  return out;
+}
+
+// The token to fetch the next page of a radio panel, if any.
+export function panelContinuation(response: unknown): string | undefined {
+  const panel = playlistPanel(response);
+  const token = nav(panel, ["continuations", 0, "nextRadioContinuationData", "continuation"])
+    ?? nav(panel, ["continuations", 0, "nextContinuationData", "continuation"]);
+  return typeof token === "string" ? token : undefined;
 }
 
 export interface TrackInfo {
@@ -186,13 +251,41 @@ export function parseShelfItem(item: unknown): ParsedItem | null {
 // Pick the largest thumbnail from a YTM renderer node and bump its requested size.
 function thumbnailFrom(node: unknown): string | undefined {
   const thumbs = (nav(node, ["thumbnailRenderer", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
-    ?? nav(node, ["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"])) as AnyRec[] | undefined;
+    ?? nav(node, ["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
+    ?? nav(node, ["thumbnail", "croppedSquareThumbnailRenderer", "thumbnail", "thumbnails"])
+    ?? nav(node, ["thumbnail", "thumbnails"])) as AnyRec[] | undefined;
   if (!Array.isArray(thumbs) || thumbs.length === 0) return undefined;
   const best = thumbs[thumbs.length - 1];
   const url = typeof best.url === "string" ? best.url : undefined;
   if (!url) return undefined;
   // Google art URLs encode a crop like "=w60-h60" or "...-w60-h60-..."; request larger.
   return url.replace(/=w\d+-h\d+/, "=w240-h240").replace(/-w\d+-h\d+(-[a-z])/i, "-w240-h240$1");
+}
+
+// The cover shown atop an album/playlist page, so its tracks can inherit it.
+export function headerThumbnail(response: unknown): string | undefined {
+  const headers = [
+    nav(response, ["header", "musicDetailHeaderRenderer"]),
+    nav(response, ["header", "musicResponsiveHeaderRenderer"]),
+    nav(response, ["contents", "twoColumnBrowseResultsRenderer", "tabs", 0, "tabRenderer", "content", "sectionListRenderer", "contents", 0, "musicResponsiveHeaderRenderer"])
+  ];
+  for (const header of headers) {
+    if (!header) continue;
+    const thumb = thumbnailFrom(header);
+    if (thumb) return thumb;
+  }
+  return undefined;
+}
+
+// Classify a browse target. Library artists use a LIBRARY_ARTIST page type and an
+// MPLA… id that the explicit checks miss, so fall back to id-prefix heuristics.
+function pageKind(pageType: string | undefined, browseId: string): ParsedItem["kind"] {
+  if (pageType === "MUSIC_PAGE_TYPE_ALBUM") return "album";
+  if (pageType === "MUSIC_PAGE_TYPE_ARTIST" || pageType === "MUSIC_PAGE_TYPE_USER_CHANNEL"
+    || pageType?.includes("ARTIST") || browseId.startsWith("UC") || browseId.startsWith("MPLA")) {
+    return "artist";
+  }
+  return "playlist";
 }
 
 function parseTwoRow(node: unknown): ParsedItem | null {
@@ -212,17 +305,24 @@ function parseTwoRow(node: unknown): ParsedItem | null {
     const browseId = (browseEndpoint as AnyRec).browseId as string | undefined;
     const pageType = nav(browseEndpoint, ["browseEndpointContextSupportedConfigs", "browseEndpointContextMusicConfig", "pageType"]) as string | undefined;
     if (!browseId) return null;
-    let kind: ParsedItem["kind"] = "playlist";
-    if (pageType === "MUSIC_PAGE_TYPE_ARTIST" || pageType === "MUSIC_PAGE_TYPE_USER_CHANNEL") kind = "artist";
-    else if (pageType === "MUSIC_PAGE_TYPE_ALBUM") kind = "album";
-    else if (pageType === "MUSIC_PAGE_TYPE_PLAYLIST") kind = "playlist";
-    return { kind, title, subtitle: subtitleParts.join(" · ") || undefined, browseId };
+    return { kind: pageKind(pageType, browseId), title, subtitle: subtitleParts.join(" · ") || undefined, browseId };
   }
   if (watchEndpoint) {
     const videoId = (watchEndpoint as AnyRec).videoId as string | undefined;
     const playlistId = (watchEndpoint as AnyRec).playlistId as string | undefined;
-    if (!videoId) return null;
-    return { kind: "song", title, subtitle: subtitleParts.join(" · ") || undefined, videoId, playlistId };
+    if (videoId) return { kind: "song", title, subtitle: subtitleParts.join(" · ") || undefined, videoId, playlistId };
+    // A tile that points at a playlist/radio with no track (e.g. a Supermix).
+    if (playlistId) return { kind: "playlist", title, subtitle: subtitleParts.join(" · ") || undefined, playlistId };
+    return null;
+  }
+  // Supermix / radio tiles navigate via a watchPlaylistEndpoint, sometimes only on
+  // the play-button overlay rather than the tile's own navigationEndpoint.
+  const playEndpoint = nav(node, ["navigationEndpoint", "watchPlaylistEndpoint"])
+    ?? nav(node, ["thumbnailOverlay", "musicItemThumbnailOverlayRenderer", "content", "musicPlayButtonRenderer", "playNavigationEndpoint", "watchPlaylistEndpoint"])
+    ?? nav(node, ["thumbnailOverlay", "musicItemThumbnailOverlayRenderer", "content", "musicPlayButtonRenderer", "playNavigationEndpoint", "watchEndpoint"]);
+  if (playEndpoint) {
+    const playlistId = (playEndpoint as AnyRec).playlistId as string | undefined;
+    if (playlistId) return { kind: "playlist", title, subtitle: subtitleParts.join(" · ") || undefined, playlistId };
   }
   return null;
 }
@@ -269,10 +369,7 @@ function parseResponsiveListItem(node: unknown): ParsedItem | null {
     const browseId = (browseEndpoint as AnyRec).browseId as string | undefined;
     const pageType = nav(browseEndpoint, ["browseEndpointContextSupportedConfigs", "browseEndpointContextMusicConfig", "pageType"]) as string | undefined;
     if (!browseId) return null;
-    let kind: ParsedItem["kind"] = "playlist";
-    if (pageType === "MUSIC_PAGE_TYPE_ARTIST" || pageType === "MUSIC_PAGE_TYPE_USER_CHANNEL") kind = "artist";
-    else if (pageType === "MUSIC_PAGE_TYPE_ALBUM") kind = "album";
-    return { kind, title, subtitle, browseId };
+    return { kind: pageKind(pageType, browseId), title, subtitle, browseId };
   }
   if (typeof watchEndpoint === "string") {
     return { kind: "song", title, subtitle, videoId: watchEndpoint, artist, album, durationSeconds };
@@ -310,7 +407,7 @@ export function parseShelves(sections: unknown[]): ParsedShelf[] {
       out.push({ title, items });
       continue;
     }
-    const shelf = nav(section, ["musicShelfRenderer"]);
+    const shelf = nav(section, ["musicShelfRenderer"]) ?? nav(section, ["musicPlaylistShelfRenderer"]);
     if (shelf) {
       const title = textRun(nav(shelf, ["title"]));
       const contents = nav(shelf, ["contents"]) as unknown[] | undefined;

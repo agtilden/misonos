@@ -780,6 +780,9 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const [stack, setStack] = useState<BrowseCrumb[]>([]);
   const crumbsRef = useRef<HTMLElement | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // Session cache of browse results, keyed by source + container id; evicted per-key
+  // by the refresh button so revisiting a level is instant.
+  const browseCache = useRef<Map<string, Awaited<ReturnType<typeof bridgeApi.browseSource>>>>(new Map());
 
   // Keep the current location (rightmost crumb) in view as the trail grows.
   useEffect(() => {
@@ -788,12 +791,54 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   }, [stack]);
   useEffect(() => {
     const onAuthChange = (event: Event) => {
-      const detail = (event as CustomEvent<{ sourceId?: string }>).detail;
-      if (!detail?.sourceId || detail.sourceId === sourceId) setRefreshNonce((n) => n + 1);
+      const changed = (event as CustomEvent<{ sourceId?: string }>).detail?.sourceId;
+      // Evict the changed source's cached entries regardless of what's currently
+      // selected, so switching back to it doesn't serve a stale (pre-auth-change)
+      // list. Only force an immediate refetch when that source is on screen.
+      if (changed) {
+        for (const key of [...browseCache.current.keys()]) {
+          if (key.startsWith(`${changed}:`)) browseCache.current.delete(key);
+        }
+        if (changed === sourceId) setRefreshNonce((n) => n + 1);
+      } else {
+        browseCache.current.clear();
+        setRefreshNonce((n) => n + 1);
+      }
     };
     window.addEventListener("misonos:source-auth-changed", onAuthChange);
     return () => window.removeEventListener("misonos:source-auth-changed", onAuthChange);
   }, [sourceId]);
+
+  // The backend can drop YouTube Music cookies on its own (a 401/403 expires them),
+  // possibly triggered from another tab/device. Poll auth status INDEPENDENTLY of the
+  // selected source so the baseline never resets and the transition is caught wherever
+  // it happens; on a drop, fire the event that evicts the (source-keyed) YT cache.
+  const lastCookieAuthRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const status = await bridgeApi.sourceAuthStatus("youtube-music");
+        if (cancelled) return;
+        const prev = lastCookieAuthRef.current;
+        lastCookieAuthRef.current = status.cookieAuth;
+        const dropped = prev === "signed-in" && status.cookieAuth === "signed-out";
+        // First sample: if already signed-out but we still hold cached YT entries,
+        // they may be stale signed-in results from before — evict them too.
+        const staleFirstSample = prev === undefined && status.cookieAuth === "signed-out"
+          && [...browseCache.current.keys()].some((key) => key.startsWith("youtube-music:"));
+        if (dropped || staleFirstSample) {
+          window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
+        }
+      } catch { /* transient — ignore */ }
+    };
+    void check();
+    const interval = window.setInterval(() => void check(), 60000);
+    const onVisible = () => { if (document.visibilityState === "visible") void check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { cancelled = true; window.clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
+
   const [data, setData] = useState<Awaited<ReturnType<typeof bridgeApi.browseSource>> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -865,13 +910,25 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
     // Ignore a stale in-flight response when the view changes again before it lands,
     // so a slow browse can't overwrite a newer one (e.g. navigating back to root).
     let cancelled = false;
+    const id = stack.length > 0 ? stack[stack.length - 1].id : undefined;
+    const cacheKey = `${sourceId}:${id ?? "root"}`;
+    // Show cached results instantly on revisit; the refresh button evicts the key so
+    // it refetches (e.g. to regenerate a Supermix). Browse results rarely change
+    // moment-to-moment, so caching avoids a slow round-trip on every navigation.
+    const cached = browseCache.current.get(cacheKey);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+      setError("");
+      return;
+    }
     setLoading(true);
     setError("");
     void (async () => {
       try {
-        const id = stack.length > 0 ? stack[stack.length - 1].id : undefined;
         const next = await bridgeApi.browseSource(sourceId, id);
         if (cancelled) return;
+        browseCache.current.set(cacheKey, next);
         setData(next);
       } catch (err) {
         if (cancelled) return;
@@ -1091,6 +1148,22 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
             <button type="button" onClick={() => pop(index + 1)}>{crumb.title}</button>
           </span>
         ))}
+        {stack.length > 0 ? (
+          <button
+            type="button"
+            className="browse-crumb-refresh"
+            title="Refresh"
+            aria-label="Refresh"
+            disabled={loading}
+            onClick={() => {
+              const id = stack.length > 0 ? stack[stack.length - 1].id : undefined;
+              browseCache.current.delete(`${sourceId}:${id ?? "root"}`);
+              setRefreshNonce((nonce) => nonce + 1);
+            }}
+          >
+            <RefreshCw size={14} className={loading ? "spin" : undefined} />
+          </button>
+        ) : null}
       </nav>
 
       {error ? (
@@ -1114,12 +1187,24 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
                 );
               }
               if (item.kind === "container") {
+                // Containers with art (albums, artists, playlists) get a thumbnail row;
+                // purely navigational tiles (Home, category folders) stay a plain button.
                 return (
                   <li key={itemKey}>
-                    <button type="button" className="browse-drill" onClick={() => drill(item)}>
-                      <span>{item.title}</span>
-                      {item.subtitle ? <small>{item.subtitle}</small> : null}
-                    </button>
+                    {item.albumArtUri ? (
+                      <div className="browse-track">
+                        <BrowseThumb src={item.albumArtUri} />
+                        <button type="button" className="browse-drill-inline" onClick={() => drill(item)}>
+                          <span>{item.title}</span>
+                          {item.subtitle ? <small>{item.subtitle}</small> : null}
+                        </button>
+                      </div>
+                    ) : (
+                      <button type="button" className="browse-drill" onClick={() => drill(item)}>
+                        <span>{item.title}</span>
+                        {item.subtitle ? <small>{item.subtitle}</small> : null}
+                      </button>
+                    )}
                   </li>
                 );
               }
@@ -1763,10 +1848,44 @@ function swGenLabel(value: string | undefined): string | undefined {
 }
 
 function YouTubeMusicAuth() {
-  type Status = { state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number };
+  type Status = { state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number; cookieAuth?: "signed-in" | "signed-out" };
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [paste, setPaste] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
+
+  const cookieSignedIn = status?.cookieAuth === "signed-in";
+
+  const saveCookies = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await bridgeApi.sourceAuthSetCookies("youtube-music", paste);
+      setStatus((current) => ({ ...(current ?? { state: "signed-out" }), ...next }));
+      setPaste("");
+      setShowPaste(false);
+      window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save cookies");
+    } finally {
+      setBusy(false);
+    }
+  }, [paste]);
+
+  const clearCookies = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await bridgeApi.sourceAuthClearCookies("youtube-music");
+      setStatus((current) => ({ ...(current ?? { state: "signed-out" }), ...next }));
+      window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't clear cookies");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -1778,6 +1897,17 @@ function YouTubeMusicAuth() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // Re-read status when auth changes elsewhere (e.g. the browser detected the
+  // backend dropping expired cookies), so this card's label stays accurate.
+  useEffect(() => {
+    const onAuthChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceId?: string }>).detail;
+      if (!detail?.sourceId || detail.sourceId === "youtube-music") void refresh();
+    };
+    window.addEventListener("misonos:source-auth-changed", onAuthChanged);
+    return () => window.removeEventListener("misonos:source-auth-changed", onAuthChanged);
   }, [refresh]);
 
   const [polling, setPolling] = useState(false);
@@ -1841,6 +1971,41 @@ function YouTubeMusicAuth() {
         <div className="settings-card-row">
           <span>Not signed in. Anonymous search works without sign-in.</span>
           <button type="button" disabled={busy} onClick={() => void start()}>Sign in with Google</button>
+        </div>
+      )}
+
+      <div className="settings-card-divider" />
+      <h4 className="settings-card-subhead">Library &amp; Supermix (cookies)</h4>
+      <p className="settings-card-help">
+        Your Library and My Supermix need your YouTube&nbsp;Music cookies. On a computer, open{" "}
+        <a href="https://music.youtube.com" target="_blank" rel="noreferrer">music.youtube.com</a> (signed in) →
+        DevTools → <strong>Network</strong> → click any <code>/browse</code> request → right-click →
+        <strong> Copy → Copy as cURL</strong>, then paste it below.
+      </p>
+      {cookieSignedIn ? (
+        <div className="settings-card-row">
+          <span>Library connected.</span>
+          <button type="button" disabled={busy} onClick={() => void clearCookies()}>Disconnect</button>
+        </div>
+      ) : showPaste ? (
+        <div className="settings-card-row settings-card-column">
+          <textarea
+            className="settings-card-textarea"
+            value={paste}
+            disabled={busy}
+            placeholder="Paste the full 'Copy as cURL' here…"
+            onChange={(event) => setPaste(event.target.value)}
+            rows={4}
+          />
+          <div className="settings-card-row">
+            <button type="button" disabled={busy || !paste.trim()} onClick={() => void saveCookies()}>Save cookies</button>
+            <button type="button" className="secondary" disabled={busy} onClick={() => { setShowPaste(false); setPaste(""); }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="settings-card-row">
+          <span>Library not connected.</span>
+          <button type="button" disabled={busy} onClick={() => setShowPaste(true)}>Paste cookies</button>
         </div>
       )}
     </section>

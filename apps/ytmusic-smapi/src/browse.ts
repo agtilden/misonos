@@ -1,6 +1,7 @@
 import type { SourceBrowseItem, SourceBrowseResponse } from "@misonos/sonos-protocol";
 import { encodeId, decodeId, type YtmId } from "./ids.js";
-import { browseMusic, parseShelves, parseShelfItem, searchMusic, type ParsedItem, type ParsedShelf } from "./ytmApi.js";
+import { browseMusic, headerThumbnail, nextContinuation, nextPlaylist, panelContinuation, panelTracks, parseShelves, parseShelfItem, searchMusic, type ParsedItem, type ParsedShelf } from "./ytmApi.js";
+import { hasCookieAuth } from "./cookieAuth.js";
 
 export async function browse(rawId: string): Promise<SourceBrowseResponse> {
   const id = decodeId(rawId);
@@ -10,12 +11,21 @@ export async function browse(rawId: string): Promise<SourceBrowseResponse> {
 
 async function browseId(id: YtmId): Promise<SourceBrowseItem[]> {
   switch (id.kind) {
-    case "root":
-      return [
+    case "root": {
+      const roots = [
         container(encodeId({ kind: "home" }), "Home"),
         container(encodeId({ kind: "new-releases" }), "New Releases"),
         container(encodeId({ kind: "charts" }), "Charts")
       ];
+      // Personalized surfaces only resolve with pasted cookie auth.
+      if (hasCookieAuth()) {
+        roots.push(
+          container(encodeId({ kind: "library" }), "Your Library"),
+          container(encodeId({ kind: "supermix" }), "My Supermix")
+        );
+      }
+      return roots;
+    }
     case "search-songs":
     case "search-artists":
     case "search-albums":
@@ -23,41 +33,70 @@ async function browseId(id: YtmId): Promise<SourceBrowseItem[]> {
     case "search":
       return runSearch(id.query, "song");
     case "home":
-      return shelvesAsItems(await safeShelves("FEmusic_home", "home"));
+      // Authenticated home is personalized (and surfaces Supermix shelves).
+      return shelvesAsItems(await safeShelves("FEmusic_home", "home", hasCookieAuth()));
     case "new-releases":
       return shelvesAsItems(await safeShelves("FEmusic_explore", "new-releases"));
     case "charts":
       return shelvesAsItems(await safeShelves("FEmusic_charts", "charts"));
     case "library":
+      // Mirror the official app's "Your Library" categories instead of the flat landing.
+      // Podcasts are intentionally omitted: YouTube Music gates episode playback
+      // behind a PO token we can't satisfy, so they'd list but never play.
+      return [
+        container(encodeId({ kind: "library-playlists" }), "Playlists"),
+        container(encodeId({ kind: "library-albums" }), "Albums"),
+        container(encodeId({ kind: "library-songs" }), "Songs"),
+        container(encodeId({ kind: "library-artists" }), "Artists")
+      ];
     case "library-playlists":
+      return shelvesAsItems(await safeShelves("FEmusic_liked_playlists", "library-playlists", true));
     case "library-liked":
+      return playlistTracks("LM", true);
     case "library-songs":
+      return shelvesAsItems(await safeShelves("FEmusic_liked_videos", "library-songs", true));
     case "library-albums":
+      return shelvesAsItems(await safeShelves("FEmusic_liked_albums", "library-albums", true));
     case "library-artists":
+      return shelvesAsItems(await safeShelves("FEmusic_library_corpus_track_artists", "library-artists", true));
     case "library-subscriptions":
+      return shelvesAsItems(await safeShelves("FEmusic_library_corpus_artists", "library-subscriptions", true));
     case "library-history":
+      return shelvesAsItems(await safeShelves("FEmusic_history", "library-history", true));
     case "supermix":
-      // Library / personalized — requires cookie auth, not implemented yet.
-      return [];
-    case "artist":
-      return shelvesAsItems(await safeShelves(id.channelId, `artist:${id.channelId}`));
+      return supermixTracks();
+    case "artist": {
+      // Library-artist pages (MPLA…) require auth; public channel pages tolerate it.
+      console.log(`[ytmusic] artist browse channelId=${id.channelId} authed=${hasCookieAuth()}`);
+      const artistItems = shelvesAsItems(await safeShelves(id.channelId, `artist:${id.channelId}`, hasCookieAuth()));
+      console.log(`[ytmusic] artist page produced ${artistItems.length} items`);
+      return artistItems;
+    }
     case "album":
       return albumTracks(id.browseId);
     case "playlist":
-      return playlistTracks(id.playlistId);
+      return playlistTracks(id.playlistId, hasCookieAuth());
     case "track":
       throw new Error("Tracks are leaves");
   }
 }
 
-async function safeShelves(browseId: string, label: string): Promise<ParsedShelf[]> {
+async function safeShelves(browseId: string, label: string, authed = false): Promise<ParsedShelf[]> {
   try {
-    const response = await browseMusic(browseId);
+    const response = await browseMusic(browseId, undefined, { authed });
     const sections = sectionList(response);
     console.log(`[ytmusic] browse [${label}] sections:`, sections.map((s) => (s && typeof s === "object") ? Object.keys(s as Record<string, unknown>)[0] : "?"));
     return parseShelves(sections);
   } catch (error) {
     console.warn(`[ytmusic] browse fetch failed [${label}]:`, error instanceof Error ? error.message : error);
+    // Stale/expired cookies shouldn't break public feeds (e.g. Home) — retry anonymously.
+    if (authed) {
+      try {
+        return parseShelves(sectionList(await browseMusic(browseId, undefined, { authed: false })));
+      } catch {
+        return [];
+      }
+    }
     return [];
   }
 }
@@ -88,8 +127,8 @@ function toSourceItem(item: ParsedItem, shelfTitle: string | undefined): SourceB
   if (item.kind === "album" && item.browseId) {
     return container(encodeId({ kind: "album", browseId: item.browseId }), item.title, subtitle, item.thumbnailUrl);
   }
-  if (item.kind === "playlist" && item.browseId) {
-    const playlistId = item.browseId.startsWith("VL") ? item.browseId.slice(2) : item.browseId;
+  const playlistId = playlistIdOf(item);
+  if (item.kind === "playlist" && playlistId) {
     return container(encodeId({ kind: "playlist", playlistId }), item.title, subtitle, item.thumbnailUrl);
   }
   if (item.kind === "song" && item.videoId) {
@@ -167,6 +206,8 @@ async function albumTracks(browseId: string): Promise<SourceBrowseItem[]> {
     const response = await browseMusic(browseId);
     // Album page has tracks inside musicShelfRenderer (sometimes under twoColumnBrowseResultsRenderer)
     const sections = sectionList(response);
+    // Album track rows carry no per-track art, so fall back to the album cover.
+    const cover = headerThumbnail(response);
     const out: SourceBrowseItem[] = [];
     for (const section of sections) {
       const shelf = nav(section, ["musicShelfRenderer"]);
@@ -176,7 +217,7 @@ async function albumTracks(browseId: string): Promise<SourceBrowseItem[]> {
       for (const raw of contents) {
         const parsed = parseShelfItem(raw);
         if (!parsed) continue;
-        const item = toSourceItem(parsed, undefined);
+        const item = toSourceItem({ ...parsed, thumbnailUrl: parsed.thumbnailUrl ?? cover }, undefined);
         if (item) out.push(item);
       }
     }
@@ -187,9 +228,11 @@ async function albumTracks(browseId: string): Promise<SourceBrowseItem[]> {
   }
 }
 
-async function playlistTracks(playlistId: string): Promise<SourceBrowseItem[]> {
+async function playlistTracks(playlistId: string, authed = false): Promise<SourceBrowseItem[]> {
+  // Radio / auto playlists (Supermix etc.) don't resolve via VL browse.
+  if (playlistId.startsWith("RD")) return radioTracks(playlistId);
   try {
-    const response = await browseMusic(`VL${playlistId}`);
+    const response = await browseMusic(`VL${playlistId}`, undefined, { authed });
     const sections = sectionList(response);
     const out: SourceBrowseItem[] = [];
     for (const section of sections) {
@@ -209,6 +252,77 @@ async function playlistTracks(playlistId: string): Promise<SourceBrowseItem[]> {
     console.warn(`[ytmusic] playlist fetch failed [${playlistId}]:`, error instanceof Error ? error.message : error);
     return [];
   }
+}
+
+const RADIO_TARGET = 100;
+
+async function radioTracks(playlistId: string): Promise<SourceBrowseItem[]> {
+  try {
+    let response = await nextPlaylist(playlistId);
+    const parsed: ParsedItem[] = [...panelTracks(response)];
+    let cont = panelContinuation(response);
+    // The first watch-next page is small (~10-25); page through continuations.
+    for (let page = 0; cont && parsed.length < RADIO_TARGET && page < 8; page++) {
+      response = await nextContinuation(cont);
+      const more = panelTracks(response);
+      if (more.length === 0) break;
+      parsed.push(...more);
+      cont = panelContinuation(response);
+    }
+    const seen = new Set<string>();
+    const out: SourceBrowseItem[] = [];
+    for (const item of parsed) {
+      if (item.videoId) {
+        if (seen.has(item.videoId)) continue;
+        seen.add(item.videoId);
+      }
+      const converted = toSourceItem(item, undefined);
+      if (converted) out.push(converted);
+    }
+    return out;
+  } catch (error) {
+    console.warn(`[ytmusic] radio fetch failed [${playlistId}]:`, error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+// "My Supermix" isn't a fixed id — find it among the user's mixes (a radio playlist
+// titled Supermix, or an RDTMAK mix) and enumerate it.
+async function supermixTracks(): Promise<SourceBrowseItem[]> {
+  const playlistId = await findSupermixPlaylistId();
+  return playlistId ? radioTracks(playlistId) : [];
+}
+
+async function findSupermixPlaylistId(): Promise<string | undefined> {
+  // The dedicated "Mixed for you" page is the reliable home for supermixes; fall
+  // back to the personalized home feed.
+  const groups = [
+    await safeShelves("FEmusic_mixed_for_you", "supermix:mixed", true),
+    await safeShelves("FEmusic_home", "supermix:home", true)
+  ];
+  let fallback: string | undefined;
+  let candidates = 0;
+  for (const shelves of groups) {
+    for (const shelf of shelves) {
+      for (const item of shelf.items) {
+        const playlistId = playlistIdOf(item);
+        if (!playlistId) continue;
+        candidates++;
+        console.log(`[ytmusic] supermix candidate: "${item.title}" id=${playlistId}`);
+        if (/supermix/i.test(item.title)) return playlistId;
+        if (!fallback && playlistId.startsWith("RDTMAK")) fallback = playlistId;
+      }
+    }
+  }
+  if (!fallback) console.log(`[ytmusic] supermix: no match among ${candidates} playlist candidates`);
+  return fallback;
+}
+
+function playlistIdOf(item: ParsedItem): string | undefined {
+  if (item.kind !== "playlist") return undefined;
+  if (item.playlistId) return item.playlistId;
+  if (item.browseId) return item.browseId.startsWith("VL") ? item.browseId.slice(2) : item.browseId;
+  return undefined;
 }
 
 function container(id: string, title: string, subtitle?: string, albumArtUri?: string): SourceBrowseItem {

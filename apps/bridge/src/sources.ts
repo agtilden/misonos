@@ -30,6 +30,9 @@ const DEFAULT_SOURCES: SourceConfig[] = [
 ];
 
 const FETCH_TIMEOUT_MS = 8000;
+// Browse can fan out into many sequential upstream calls (e.g. YouTube Music's
+// Supermix pages a radio across ~9 requests), so give it more headroom.
+const BROWSE_TIMEOUT_MS = 30000;
 const infoCache = new Map<string, SourceDescriptor>();
 
 export function listSourceConfigs(): SourceConfig[] {
@@ -56,7 +59,7 @@ export async function browseSource(sourceId: string, id?: string): Promise<Sourc
   const queryId = id ?? info.rootId;
   const target = new URL("/browse", config.baseUrl);
   target.searchParams.set("id", queryId);
-  const result = await fetchJson<SourceBrowseResponse>(target);
+  const result = await fetchJson<SourceBrowseResponse>(target, undefined, BROWSE_TIMEOUT_MS);
   return {
     ...result,
     items: result.items.map((item) => ({ ...item, albumArtUri: bridgeArtUrl(sourceId, item) }))
@@ -93,6 +96,21 @@ export async function sourceAuthStart(sourceId: string): Promise<unknown> {
 export async function sourceAuthSignOut(sourceId: string): Promise<unknown> {
   const config = requireConfig(sourceId);
   return fetchJson<unknown>(new URL("/auth/signout", config.baseUrl), { method: "POST" });
+}
+
+export async function sourceAuthSetCookies(sourceId: string, raw: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  // The source reads the body as a raw cURL/header paste, not JSON.
+  return fetchJson<unknown>(new URL("/auth/cookies", config.baseUrl), {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: raw
+  });
+}
+
+export async function sourceAuthClearCookies(sourceId: string): Promise<unknown> {
+  const config = requireConfig(sourceId);
+  return fetchJson<unknown>(new URL("/auth/cookies/clear", config.baseUrl), { method: "POST" });
 }
 
 async function fetchInfo(config: SourceConfig): Promise<SourceDescriptor> {
