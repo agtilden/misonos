@@ -78,8 +78,64 @@ tccutil reset LocalNetwork com.misonos.bridge
 ## Managing the service
 
 ```sh
-open ~/Applications/MiSonos.app          # start
-osascript -e 'quit app "MiSonos"'        # stop
+open ~/Applications/MiSonos.app                              # start
+pkill -f 'MiSonos.app/Contents/MacOS/misonos'               # stop (kills launcher; children follow)
 tail -f ~/Library/Logs/misonos-bridge.out.log
 tail -f ~/Library/Logs/misonos-bridge.err.log
 ```
+
+> Stop with `pkill`, not `osascript -e 'quit app "MiSonos"'` — the launcher is a
+> plain C agent with no AppleEvent loop, so the AppleScript `quit` is a no-op.
+
+## Updating to a new version
+
+Run this on the closet Mac (over Screen Sharing — the `open` needs the GUI login
+session). It pulls, rebuilds, recompiles + re-signs the bundle, and relaunches.
+
+```sh
+cd ~/Documents/projects/misonos
+
+# 1. Get the new code.
+git pull
+
+# 2. Stop the running app (launcher + bridge + smapi/web children).
+pkill -f 'MiSonos.app/Contents/MacOS/misonos' 2>/dev/null
+pkill -f 'apps/bridge/dist/index.js'          2>/dev/null
+pkill -f 'tsx watch src/index.ts'             2>/dev/null
+pkill -f 'vite preview'                       2>/dev/null
+sleep 2
+
+# 3. Rebuild dist + bundle, recompile the launcher, re-sign, re-register login item.
+MISONOS_BRIDGE_PUBLIC_HOST=192.168.68.64 deploy/macos/install.sh
+
+# 4. Relaunch from the GUI session.
+open ~/Applications/MiSonos.app
+sleep 5
+
+# 5. Force a LAN call, then confirm the zones come back.
+curl -s -X POST http://localhost:4317/api/discover >/dev/null
+sleep 15
+curl -s http://localhost:4317/api/zones | python3 -m json.tool | head
+```
+
+Sanity checks if step 5 is empty:
+
+```sh
+lsof -nP -iTCP:4317 -sTCP:LISTEN          # bridge is listening?
+pgrep -fl 'MiSonos.app/Contents/MacOS'   # launcher resident (not exec'd away)?
+tail -n 40 ~/Library/Logs/misonos-bridge.err.log
+```
+
+**Re-granting after an update.** The Local Network grant is tied to the bundle's
+code hash (ad-hoc signature → identity *is* the cdhash). Any change to `run.sh`
+or the launcher — i.e. most updates — produces a new hash, so macOS may drop the
+grant and prompt again. If zones are `[]` and no prompt appeared, re-trigger it:
+
+```sh
+tccutil reset LocalNetwork com.misonos.bridge   # often fails on this macOS — ignore and continue
+open ~/Applications/MiSonos.app
+curl -s -X POST http://localhost:4317/api/discover >/dev/null   # then click Allow
+```
+
+If a stale "denied" decision is stuck and won't re-prompt, a reboot clears it
+(`tccutil` is unreliable on this macOS version).

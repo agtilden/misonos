@@ -119,6 +119,8 @@ RUN_SH="$APP/Contents/Resources/run.sh"
   echo 'npm run dev -w @misonos/grateful-smapi >> "$LOG/misonos-grateful.log" 2>&1 &'
   echo 'npm run dev -w @misonos/phish-smapi    >> "$LOG/misonos-phish.log" 2>&1 &'
   echo 'npm run dev -w @misonos/ytmusic-smapi  >> "$LOG/misonos-ytmusic.log" 2>&1 &'
+  echo 'npm run dev -w @misonos/lma-smapi      >> "$LOG/misonos-lma.log" 2>&1 &'
+  echo 'npm run dev -w @misonos/podcast-smapi  >> "$LOG/misonos-podcast.log" 2>&1 &'
   echo 'npm run preview -w @misonos/web        >> "$LOG/misonos-web.log" 2>&1 &'
   echo '# The bridge runs as a child of the resident C launcher (the bundle main'
   echo '# executable), which stays alive as the Local-Network-responsible app.'
