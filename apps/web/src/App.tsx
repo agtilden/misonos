@@ -448,7 +448,7 @@ export function App() {
             <button className="icon-button topbar-back" type="button" title="Back" aria-label="Back" onClick={() => setView("main")}>
               <ArrowLeft size={18} />
             </button>
-            <span className="topbar-title">{view === "settings" ? "Settings" : view === "browse" ? "Browse" : view === "library" ? "Library" : "Group Editor"}</span>
+            <span className="topbar-title">{view === "settings" ? "Settings" : view === "browse" ? "Music" : view === "library" ? "Library" : "Group Editor"}</span>
             {view === "settings" ? (
               <>
                 <p className="eyebrow">MiSonos</p>
@@ -801,6 +801,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
     setLoading(true);
     setError("");
     setSearchActive(true);
+    setStack([]); // search is a fresh context — drop the browse breadcrumb trail
     const type = supportsTypedSearch ? (overrideType ?? searchType) : undefined;
     try {
       const next = await bridgeApi.searchSource(sourceId, searchQuery.trim(), type);
@@ -1015,8 +1016,8 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
           {supportsTypedSearch ? (
             <div className="browse-search-types" role="tablist">
               {([
-                { value: "song", label: "Songs" },
                 { value: "artist", label: "Artists" },
+                { value: "song", label: "Songs" },
                 { value: "album", label: "Albums" }
               ] as const).map((entry) => (
                 <button
