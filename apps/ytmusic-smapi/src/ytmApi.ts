@@ -304,10 +304,13 @@ function parseTwoRow(node: unknown): ParsedItem | null {
     if (playlistId) return { kind: "playlist", title, subtitle: subtitleParts.join(" · ") || undefined, playlistId };
     return null;
   }
-  // Supermix / radio tiles navigate via a watchPlaylistEndpoint instead.
-  const watchPlaylist = nav(node, ["navigationEndpoint", "watchPlaylistEndpoint"]);
-  if (watchPlaylist) {
-    const playlistId = (watchPlaylist as AnyRec).playlistId as string | undefined;
+  // Supermix / radio tiles navigate via a watchPlaylistEndpoint, sometimes only on
+  // the play-button overlay rather than the tile's own navigationEndpoint.
+  const playEndpoint = nav(node, ["navigationEndpoint", "watchPlaylistEndpoint"])
+    ?? nav(node, ["thumbnailOverlay", "musicItemThumbnailOverlayRenderer", "content", "musicPlayButtonRenderer", "playNavigationEndpoint", "watchPlaylistEndpoint"])
+    ?? nav(node, ["thumbnailOverlay", "musicItemThumbnailOverlayRenderer", "content", "musicPlayButtonRenderer", "playNavigationEndpoint", "watchEndpoint"]);
+  if (playEndpoint) {
+    const playlistId = (playEndpoint as AnyRec).playlistId as string | undefined;
     if (playlistId) return { kind: "playlist", title, subtitle: subtitleParts.join(" · ") || undefined, playlistId };
   }
   return null;

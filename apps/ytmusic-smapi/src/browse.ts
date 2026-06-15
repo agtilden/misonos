@@ -66,9 +66,13 @@ async function browseId(id: YtmId): Promise<SourceBrowseItem[]> {
       return shelvesAsItems(await safeShelves("FEmusic_history", "library-history", true));
     case "supermix":
       return supermixTracks();
-    case "artist":
+    case "artist": {
       // Library-artist pages (MPLA…) require auth; public channel pages tolerate it.
-      return shelvesAsItems(await safeShelves(id.channelId, `artist:${id.channelId}`, hasCookieAuth()));
+      console.log(`[ytmusic] artist browse channelId=${id.channelId} authed=${hasCookieAuth()}`);
+      const artistItems = shelvesAsItems(await safeShelves(id.channelId, `artist:${id.channelId}`, hasCookieAuth()));
+      console.log(`[ytmusic] artist page produced ${artistItems.length} items`);
+      return artistItems;
+    }
     case "album":
       return albumTracks(id.browseId);
     case "playlist":
@@ -283,20 +287,36 @@ async function radioTracks(playlistId: string): Promise<SourceBrowseItem[]> {
   }
 }
 
-// "My Supermix" isn't a fixed id — find it in the authenticated home feed (a radio
-// playlist whose title says Supermix, or the personalized RDTMAK mix) and enumerate it.
+// "My Supermix" isn't a fixed id — find it among the user's mixes (a radio playlist
+// titled Supermix, or an RDTMAK mix) and enumerate it.
 async function supermixTracks(): Promise<SourceBrowseItem[]> {
-  const shelves = await safeShelves("FEmusic_home", "supermix", true);
+  const playlistId = await findSupermixPlaylistId();
+  return playlistId ? radioTracks(playlistId) : [];
+}
+
+async function findSupermixPlaylistId(): Promise<string | undefined> {
+  // The dedicated "Mixed for you" page is the reliable home for supermixes; fall
+  // back to the personalized home feed.
+  const groups = [
+    await safeShelves("FEmusic_mixed_for_you", "supermix:mixed", true),
+    await safeShelves("FEmusic_home", "supermix:home", true)
+  ];
   let fallback: string | undefined;
-  for (const shelf of shelves) {
-    for (const item of shelf.items) {
-      const playlistId = playlistIdOf(item);
-      if (!playlistId) continue;
-      if (/supermix/i.test(item.title)) return radioTracks(playlistId);
-      if (!fallback && playlistId.startsWith("RDTMAK")) fallback = playlistId;
+  let candidates = 0;
+  for (const shelves of groups) {
+    for (const shelf of shelves) {
+      for (const item of shelf.items) {
+        const playlistId = playlistIdOf(item);
+        if (!playlistId) continue;
+        candidates++;
+        console.log(`[ytmusic] supermix candidate: "${item.title}" id=${playlistId}`);
+        if (/supermix/i.test(item.title)) return playlistId;
+        if (!fallback && playlistId.startsWith("RDTMAK")) fallback = playlistId;
+      }
     }
   }
-  return fallback ? radioTracks(fallback) : [];
+  if (!fallback) console.log(`[ytmusic] supermix: no match among ${candidates} playlist candidates`);
+  return fallback;
 }
 
 function playlistIdOf(item: ParsedItem): string | undefined {
