@@ -40,19 +40,28 @@ async function browseId(id: YtmId): Promise<SourceBrowseItem[]> {
     case "charts":
       return shelvesAsItems(await safeShelves("FEmusic_charts", "charts"));
     case "library":
-      return shelvesAsItems(await safeShelves("FEmusic_library_landing", "library", true));
+      // Mirror the official app's "Your Library" categories instead of the flat landing.
+      return [
+        container(encodeId({ kind: "library-playlists" }), "Playlists"),
+        container(encodeId({ kind: "library-albums" }), "Albums"),
+        container(encodeId({ kind: "library-songs" }), "Songs"),
+        container(encodeId({ kind: "library-artists" }), "Artists"),
+        container(encodeId({ kind: "library-podcasts" }), "Podcasts")
+      ];
     case "library-playlists":
       return shelvesAsItems(await safeShelves("FEmusic_liked_playlists", "library-playlists", true));
     case "library-liked":
       return playlistTracks("LM", true);
     case "library-songs":
-      return shelvesAsItems(await safeShelves("FEmusic_library_privately_owned_tracks", "library-songs", true));
+      return shelvesAsItems(await safeShelves("FEmusic_liked_videos", "library-songs", true));
     case "library-albums":
       return shelvesAsItems(await safeShelves("FEmusic_liked_albums", "library-albums", true));
     case "library-artists":
-      return shelvesAsItems(await safeShelves("FEmusic_corpus_artists", "library-artists", true));
+      return shelvesAsItems(await safeShelves("FEmusic_library_corpus_track_artists", "library-artists", true));
     case "library-subscriptions":
       return shelvesAsItems(await safeShelves("FEmusic_library_corpus_artists", "library-subscriptions", true));
+    case "library-podcasts":
+      return shelvesAsItems(await safeShelves("FEmusic_library_non_music_audio_list", "library-podcasts", true));
     case "library-history":
       return shelvesAsItems(await safeShelves("FEmusic_history", "library-history", true));
     case "supermix":
@@ -324,6 +333,7 @@ function titleFor(id: YtmId): string {
     case "library-albums": return "Albums";
     case "library-artists": return "Artists";
     case "library-subscriptions": return "Subscriptions";
+    case "library-podcasts": return "Podcasts";
     case "library-history": return "History";
     case "supermix": return "My Supermix";
     case "artist": return "Artist";

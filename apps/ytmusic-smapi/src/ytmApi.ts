@@ -356,7 +356,7 @@ export function parseShelves(sections: unknown[]): ParsedShelf[] {
       out.push({ title, items });
       continue;
     }
-    const shelf = nav(section, ["musicShelfRenderer"]);
+    const shelf = nav(section, ["musicShelfRenderer"]) ?? nav(section, ["musicPlaylistShelfRenderer"]);
     if (shelf) {
       const title = textRun(nav(shelf, ["title"]));
       const contents = nav(shelf, ["contents"]) as unknown[] | undefined;
