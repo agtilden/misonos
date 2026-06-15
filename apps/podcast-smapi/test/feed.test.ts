@@ -70,9 +70,17 @@ describe("isPrivateAddress (SSRF guard)", () => {
   });
   it("handles v6 loopback/link-local/unique-local and mapped v4", () => {
     expect(isPrivateAddress("::1")).toBe(true);
+    expect(isPrivateAddress("::")).toBe(true);
     expect(isPrivateAddress("fe80::1")).toBe(true);
     expect(isPrivateAddress("fd00::1")).toBe(true);
     expect(isPrivateAddress("::ffff:127.0.0.1")).toBe(true);
     expect(isPrivateAddress("2606:4700:4700::1111")).toBe(false);
+  });
+
+  it("catches IPv4-mapped IPv6 in hex form, not just dotted", () => {
+    expect(isPrivateAddress("::ffff:7f00:1")).toBe(true);  // 127.0.0.1
+    expect(isPrivateAddress("::ffff:0a00:1")).toBe(true);  // 10.0.0.1
+    expect(isPrivateAddress("::ffff:c0a8:101")).toBe(true); // 192.168.1.1
+    expect(isPrivateAddress("::ffff:0808:0808")).toBe(false); // 8.8.8.8 (public)
   });
 });
