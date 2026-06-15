@@ -14,7 +14,6 @@ export type YtmId =
   | { kind: "library-albums" }
   | { kind: "library-artists" }
   | { kind: "library-subscriptions" }
-  | { kind: "library-podcasts" }
   | { kind: "library-history" }
   | { kind: "supermix" }
   | { kind: "artist"; channelId: string }
@@ -37,7 +36,6 @@ const SIMPLE: Record<string, YtmId["kind"]> = {
   "library-albums": "library-albums",
   "library-artists": "library-artists",
   "library-subscriptions": "library-subscriptions",
-  "library-podcasts": "library-podcasts",
   "library-history": "library-history",
   "supermix": "supermix"
 };
