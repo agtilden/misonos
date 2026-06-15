@@ -1,10 +1,11 @@
-import { ArrowLeft, AudioLines, Blend, Check, Circle, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Play, Plus, RefreshCw, Repeat, Repeat1, Settings, Shuffle, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Play, Plus, RefreshCw, Repeat, Repeat1, Settings, Shuffle, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
 import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
+import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { buildGroupOptions } from "./groupPalette.js";
 import { LAST_GROUP_PREF, LAST_SOURCE_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
@@ -498,6 +499,7 @@ export function App() {
             }}
           />
           <Equalizer zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
+          <Alarms zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
           <AboutSystem />
           <YouTubeMusicAuth />
           <CustomMusicServices zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
@@ -603,7 +605,7 @@ export function App() {
               disabled={!selectedGroup}
               onClick={() => void cycleRepeat()}
             >
-              {nowPlaying?.repeat === "one" ? <Repeat1 size={18} /> : <Repeat size={18} />}
+              {nowPlaying?.repeat === "one" ? <Repeat1 size={16} /> : <Repeat size={16} />}
             </button>
             <button
               className={`icon-button mode${nowPlaying?.shuffle ? " active" : ""}`}
@@ -613,7 +615,7 @@ export function App() {
               disabled={!selectedGroup}
               onClick={() => void toggleShuffle()}
             >
-              <Shuffle size={18} />
+              <Shuffle size={16} />
             </button>
             <button
               className={`icon-button mode${nowPlaying?.crossfade ? " active" : ""}`}
@@ -623,7 +625,7 @@ export function App() {
               disabled={!selectedGroup}
               onClick={() => void toggleCrossfade()}
             >
-              <Blend size={18} />
+              <Blend size={16} />
             </button>
             <SleepTimer
               remainingSeconds={nowPlaying?.sleepTimerSeconds}
@@ -737,6 +739,12 @@ interface SourceBrowserProps {
 interface BrowseCrumb {
   id: string;
   title: string;
+}
+
+function BrowseThumb({ src }: { src?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return <span className="browse-thumb browse-thumb-empty" aria-hidden="true">♪</span>;
+  return <img className="browse-thumb" src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
 }
 
 function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowserProps) {
@@ -1105,6 +1113,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
               return (
                 <li key={itemKey}>
                   <div className="browse-track">
+                    <BrowseThumb src={item.albumArtUri} />
                     {isAlbum ? (
                       <button type="button" className="browse-drill-inline" onClick={() => drill(item)}>
                         <span>{item.title}</span>
@@ -2084,8 +2093,9 @@ function SleepTimer({ remainingSeconds, disabled, onSet }: SleepTimerProps) {
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
       >
-        {active ? <Circle size={18} fill="currentColor" aria-label="Sleep timer on" /> : <Moon size={18} />}
-        {active ? <span className="sleep-timer-label">{Math.ceil((remainingSeconds ?? 0) / 60)}m</span> : null}
+        {active
+          ? <span className="sleep-timer-label" aria-label="Minutes left">{Math.ceil((remainingSeconds ?? 0) / 60)}</span>
+          : <Moon size={16} />}
       </button>
       {open ? (
         <ul className="sleep-timer-menu" role="menu">

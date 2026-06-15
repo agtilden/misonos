@@ -21,6 +21,7 @@ export interface Recording {
   date: string; // YYYY-MM-DD (best effort)
   year: string;
   venue: string;
+  artist: string;
 }
 
 export interface Track {
@@ -47,6 +48,7 @@ interface SearchDoc {
   year?: string | number;
   venue?: string | string[];
   coverage?: string | string[];
+  creator?: string | string[];
   downloads?: number;
 }
 
@@ -157,7 +159,7 @@ export class ArchiveClient {
     params.set("rows", String(rows));
     params.set("start", String(start));
     params.set("output", "json");
-    for (const field of ["identifier", "title", "date", "year", "venue", "coverage", "downloads"]) {
+    for (const field of ["identifier", "title", "date", "year", "venue", "coverage", "creator", "downloads"]) {
       params.append("fl[]", field);
     }
     for (const s of sort) params.append("sort[]", s);
@@ -217,7 +219,8 @@ function toRecording(doc: SearchDoc): Recording {
     title: firstString(doc.title) ?? doc.identifier,
     date,
     year: doc.year !== undefined ? String(doc.year) : date.slice(0, 4),
-    venue
+    venue,
+    artist: firstString(doc.creator) ?? ""
   };
 }
 

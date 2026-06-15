@@ -39,6 +39,46 @@ export interface QueueItem {
 
 export type RepeatMode = "none" | "all" | "one";
 
+// Sonos alarms (AlarmClock service). Household-wide.
+export type AlarmRecurrence =
+  | "once"
+  | "daily"
+  | "weekdays"
+  | "weekends"
+  | { days: number[] }; // 0=Sun … 6=Sat
+
+export type AlarmProgram = "chime" | "queue" | "other";
+
+export interface Alarm {
+  id: string;
+  startTime: string; // "HH:MM:SS" (speaker local time)
+  durationSeconds: number;
+  recurrence: AlarmRecurrence;
+  enabled: boolean;
+  roomUuid: string;
+  roomName?: string;
+  program: AlarmProgram; // derived from programUri
+  programUri: string; // preserved verbatim for round-trip
+  programMetaData: string;
+  playMode: string;
+  volume: number; // 0..100
+  includeLinkedZones: boolean;
+}
+
+export interface AlarmInput {
+  startTime: string; // "HH:MM" or "HH:MM:SS"
+  durationSeconds?: number;
+  recurrence: AlarmRecurrence;
+  enabled: boolean;
+  roomUuid: string;
+  program: AlarmProgram; // "other" => keep existing programUri (update only)
+  programUri?: string;
+  programMetaData?: string;
+  playMode?: string;
+  volume: number; // 0..100
+  includeLinkedZones?: boolean;
+}
+
 export interface NowPlaying {
   groupId: string;
   state: PlaybackState;
@@ -168,6 +208,7 @@ export interface SourceBrowseItem {
   artist?: string;
   album?: string;
   durationSeconds?: number;
+  albumArtUri?: string;
 }
 
 export type PlaybackMode = "replace" | "next" | "end";

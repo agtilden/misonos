@@ -1,8 +1,25 @@
-import type { SourceBrowseResponse, SourceDescriptor, SourceTrackInfo } from "@misonos/sonos-protocol";
+import type { SourceBrowseItem, SourceBrowseResponse, SourceDescriptor, SourceTrackInfo } from "@misonos/sonos-protocol";
 
 interface SourceConfig {
   id: string;
   baseUrl: string;
+}
+
+// Archive.org-backed sources whose own thumbnails are generic — prefer iTunes cover art,
+// falling back to the source's native (archive __ia_thumb) image.
+const ITUNES_ART_SOURCES = new Set(["grateful-dead-archive", "live-music-archive"]);
+
+// Rewrite a browse item's raw art into a bridge `/api/art?…` URL (proxied + cached, lazy).
+function bridgeArtUrl(sourceId: string, item: SourceBrowseItem): string | undefined {
+  const native = item.albumArtUri;
+  if (ITUNES_ART_SOURCES.has(sourceId) && item.artist) {
+    const params = new URLSearchParams({ artist: item.artist });
+    if (item.album) params.set("album", item.album);
+    if (native) params.set("fallback", native);
+    return `/api/art?${params.toString()}`;
+  }
+  if (native && /^https?:\/\//i.test(native)) return `/api/art?u=${encodeURIComponent(native)}`;
+  return native;
 }
 
 const DEFAULT_SOURCES: SourceConfig[] = [
@@ -39,7 +56,11 @@ export async function browseSource(sourceId: string, id?: string): Promise<Sourc
   const queryId = id ?? info.rootId;
   const target = new URL("/browse", config.baseUrl);
   target.searchParams.set("id", queryId);
-  return fetchJson<SourceBrowseResponse>(target);
+  const result = await fetchJson<SourceBrowseResponse>(target);
+  return {
+    ...result,
+    items: result.items.map((item) => ({ ...item, albumArtUri: bridgeArtUrl(sourceId, item) }))
+  };
 }
 
 export async function fetchTrack(sourceId: string, id: string): Promise<SourceTrackInfo> {

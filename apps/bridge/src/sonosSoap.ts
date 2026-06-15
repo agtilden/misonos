@@ -8,7 +8,8 @@ export type ServiceType =
   | "DeviceProperties"
   | "ZoneGroupTopology"
   | "MusicServices"
-  | "SystemProperties";
+  | "SystemProperties"
+  | "AlarmClock";
 
 export class SonosSoapError extends Error {
   constructor(
@@ -77,6 +78,8 @@ export function controlUrlForService(serviceType: ServiceType): string {
       return "/MusicServices/Control";
     case "SystemProperties":
       return "/SystemProperties/Control";
+    case "AlarmClock":
+      return "/AlarmClock/Control";
   }
 }
 
@@ -98,6 +101,8 @@ export function eventUrlForService(serviceType: ServiceType): string {
       return "/MusicServices/Event";
     case "SystemProperties":
       return "/SystemProperties/Event";
+    case "AlarmClock":
+      return "/AlarmClock/Event";
   }
 }
 

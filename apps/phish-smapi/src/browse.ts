@@ -29,7 +29,8 @@ export class PhishBrowser {
       album: showLabel(track),
       durationSeconds: typeof track.duration === "number" ? Math.round(track.duration / 1000) : undefined,
       url: track.mp3_url,
-      mimeType: "audio/mpeg"
+      mimeType: "audio/mpeg",
+      albumArtUri: coverArt(track) ?? coverArt(track.show)
     };
   }
 
@@ -139,8 +140,13 @@ function showItem(show: PhishShow): SourceBrowseItem {
     id: encodeId({ kind: "show", showId: show.date || String(show.id) }),
     title: show.date || `Show ${show.id}`,
     kind: "album",
-    subtitle
+    subtitle,
+    albumArtUri: coverArt(show)
   };
+}
+
+function coverArt(source: { cover_art_urls?: { medium?: string; small?: string }; album_cover_url?: string } | undefined): string | undefined {
+  return source?.cover_art_urls?.medium ?? source?.cover_art_urls?.small ?? source?.album_cover_url;
 }
 
 function trackItem(track: PhishTrack, show: PhishShow): SourceBrowseItem {
@@ -153,7 +159,8 @@ function trackItem(track: PhishTrack, show: PhishShow): SourceBrowseItem {
     subtitle: track.set_name,
     artist: "Phish",
     album: showLabelFromShow(show),
-    durationSeconds: typeof track.duration === "number" ? Math.round(track.duration / 1000) : undefined
+    durationSeconds: typeof track.duration === "number" ? Math.round(track.duration / 1000) : undefined,
+    albumArtUri: coverArt(track) ?? coverArt(show)
   };
 }
 

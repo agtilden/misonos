@@ -1,12 +1,13 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
-import type { BridgeEvent, EqPayload, EqPreset, Favorite, PlaybackMode, RecentlyViewedItem, RepeatMode, SourceItemKind, TransportAction, VolumePayload } from "@misonos/sonos-protocol";
+import type { AlarmInput, BridgeEvent, EqPayload, EqPreset, Favorite, PlaybackMode, RecentlyViewedItem, RepeatMode, SourceItemKind, TransportAction, VolumePayload } from "@misonos/sonos-protocol";
 import type { BridgeConfig } from "./config.js";
 import { SonosEventManager } from "./sonosEvents.js";
 import { SonosService } from "./sonosService.js";
 import type { Store } from "./store/index.js";
 import { proxyStream } from "./streamProxy.js";
-import { proxyArt } from "./artProxy.js";
+import { serveArt } from "./artProxy.js";
+import path from "node:path";
 
 type RouteHandler = (
   request: IncomingMessage,
@@ -17,6 +18,7 @@ type RouteHandler = (
 export function createServer(service: SonosService, config: BridgeConfig, store: Store): http.Server {
   const clients = new Set<ServerResponse>();
   const sonosEvents = new SonosEventManager(config);
+  const artCacheDir = path.join(path.dirname(config.dbPath), "art-cache");
 
   const sendEvent = (event: BridgeEvent) => {
     for (const client of clients) {
@@ -53,9 +55,10 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, { ok: true, name: "misonos-bridge" });
     }
     if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/api/art") {
-      const target = url.searchParams.get("u");
-      if (!target) return json(response, { error: "Missing u" }, 400);
-      await proxyArt(target, request, response);
+      if (!url.searchParams.get("u") && !url.searchParams.get("artist") && !url.searchParams.get("fallback")) {
+        return json(response, { error: "Missing art descriptor" }, 400);
+      }
+      await serveArt(url.searchParams, request, response, artCacheDir);
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/events") {
@@ -146,6 +149,30 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       const nowPlaying = await service.setSleepTimer(decodeURIComponent(sleepTimerMatch[1]), body.seconds);
       sendEvent({ type: "now-playing", payload: nowPlaying, at: new Date().toISOString() });
       return json(response, nowPlaying);
+    }
+
+    // --- Alarms (household-wide; POST-only writes) ---
+    if (url.pathname === "/api/alarms") {
+      if (request.method === "GET") return json(response, await service.listAlarms());
+      if (request.method === "POST") {
+        const body = await readJson<AlarmInput>(request);
+        const invalid = validateAlarmInput(body);
+        if (invalid) return json(response, { error: invalid }, 400);
+        return json(response, await service.createAlarm(body), 201);
+      }
+    }
+
+    const alarmDeleteMatch = url.pathname.match(/^\/api\/alarms\/([^/]+)\/delete$/);
+    if (request.method === "POST" && alarmDeleteMatch) {
+      return json(response, await service.deleteAlarm(decodeURIComponent(alarmDeleteMatch[1])));
+    }
+
+    const alarmUpdateMatch = url.pathname.match(/^\/api\/alarms\/([^/]+)$/);
+    if (request.method === "POST" && alarmUpdateMatch) {
+      const body = await readJson<AlarmInput>(request);
+      const invalid = validateAlarmInput(body);
+      if (invalid) return json(response, { error: invalid }, 400);
+      return json(response, await service.updateAlarm(decodeURIComponent(alarmUpdateMatch[1]), body));
     }
 
     const groupVolumeMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/volume$/);
@@ -548,4 +575,18 @@ function errorMessage(error: unknown): string {
 
 function isTransportAction(value: unknown): value is TransportAction {
   return value === "play" || value === "pause" || value === "stop" || value === "next" || value === "previous";
+}
+
+function validateAlarmInput(body: AlarmInput): string | null {
+  if (!body || typeof body !== "object") return "Missing body";
+  if (!body.roomUuid) return "Missing roomUuid";
+  if (typeof body.startTime !== "string" || !/^\d{2}:\d{2}(:\d{2})?$/.test(body.startTime)) return "Invalid startTime (HH:MM)";
+  if (typeof body.volume !== "number" || body.volume < 0 || body.volume > 100) return "Invalid volume (0-100)";
+  if (body.program !== "chime" && body.program !== "queue" && body.program !== "other") return "Invalid program";
+  const recurrence = body.recurrence;
+  const isPreset = recurrence === "once" || recurrence === "daily" || recurrence === "weekdays" || recurrence === "weekends";
+  const isDays = typeof recurrence === "object" && recurrence !== null && Array.isArray((recurrence as { days?: unknown }).days)
+    && (recurrence as { days: unknown[] }).days.every((day) => typeof day === "number" && day >= 0 && day <= 6);
+  if (!isPreset && !isDays) return "Invalid recurrence";
+  return null;
 }

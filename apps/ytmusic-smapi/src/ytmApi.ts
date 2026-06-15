@@ -166,14 +166,33 @@ export interface ParsedItem {
   durationSeconds?: number;
   artist?: string;
   album?: string;
+  thumbnailUrl?: string;
 }
 
 export function parseShelfItem(item: unknown): ParsedItem | null {
   const twoRow = nav(item, ["musicTwoRowItemRenderer"]);
-  if (twoRow) return parseTwoRow(twoRow);
+  if (twoRow) {
+    const parsed = parseTwoRow(twoRow);
+    return parsed ? { ...parsed, thumbnailUrl: thumbnailFrom(twoRow) } : null;
+  }
   const listItem = nav(item, ["musicResponsiveListItemRenderer"]);
-  if (listItem) return parseResponsiveListItem(listItem);
+  if (listItem) {
+    const parsed = parseResponsiveListItem(listItem);
+    return parsed ? { ...parsed, thumbnailUrl: thumbnailFrom(listItem) } : null;
+  }
   return null;
+}
+
+// Pick the largest thumbnail from a YTM renderer node and bump its requested size.
+function thumbnailFrom(node: unknown): string | undefined {
+  const thumbs = (nav(node, ["thumbnailRenderer", "musicThumbnailRenderer", "thumbnail", "thumbnails"])
+    ?? nav(node, ["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"])) as AnyRec[] | undefined;
+  if (!Array.isArray(thumbs) || thumbs.length === 0) return undefined;
+  const best = thumbs[thumbs.length - 1];
+  const url = typeof best.url === "string" ? best.url : undefined;
+  if (!url) return undefined;
+  // Google art URLs encode a crop like "=w60-h60" or "...-w60-h60-..."; request larger.
+  return url.replace(/=w\d+-h\d+/, "=w240-h240").replace(/-w\d+-h\d+(-[a-z])/i, "-w240-h240$1");
 }
 
 function parseTwoRow(node: unknown): ParsedItem | null {

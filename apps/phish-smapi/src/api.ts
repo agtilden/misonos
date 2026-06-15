@@ -2,6 +2,12 @@ import type { PhishConfig } from "./config.js";
 
 const REQUEST_TIMEOUT_MS = 10000;
 
+export interface PhishCoverArtUrls {
+  large?: string;
+  medium?: string;
+  small?: string;
+}
+
 export interface PhishShow {
   id: number;
   date: string;
@@ -10,6 +16,8 @@ export interface PhishShow {
   tour_name?: string;
   tour?: { id?: number; name?: string };
   tracks?: PhishTrack[];
+  cover_art_urls?: PhishCoverArtUrls;
+  album_cover_url?: string;
 }
 
 export interface PhishTrack {
@@ -23,7 +31,9 @@ export interface PhishTrack {
   show_date?: string;
   venue_name?: string;
   songs?: { id: number; title: string }[];
-  show?: { id: number; date: string; venue_name?: string };
+  show?: { id: number; date: string; venue_name?: string; cover_art_urls?: PhishCoverArtUrls; album_cover_url?: string };
+  cover_art_urls?: PhishCoverArtUrls;
+  album_cover_url?: string;
 }
 
 export interface PhishSong {

@@ -16,6 +16,12 @@ export interface BrowseItem {
   artist?: string;
   durationSeconds?: number;
   mimeType?: string;
+  albumArtUri?: string;
+}
+
+// Every archive.org item exposes a predictable auto-generated thumbnail.
+export function archiveThumbUrl(itemId: string): string {
+  return `https://archive.org/download/${encodeURIComponent(itemId)}/__ia_thumb.jpg`;
 }
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -146,6 +152,7 @@ export async function browse(id: LmaId, index: number, count: number, ctx: Smapi
     case "item": {
       const item = await ctx.client.item(id.itemId);
       const album = showLabel(item.date, item.venue);
+      const itemArt = archiveThumbUrl(item.id);
       const items = item.tracks.map((track) => ({
         id: encodeId({ kind: "track", itemId: item.id, fileIndex: track.fileIndex }),
         title: track.title,
@@ -153,7 +160,8 @@ export async function browse(id: LmaId, index: number, count: number, ctx: Smapi
         artist: item.artist,
         album,
         durationSeconds: track.durationSeconds,
-        mimeType: "audio/mpeg"
+        mimeType: "audio/mpeg",
+        albumArtUri: itemArt
       }));
       return page(items, index, count);
     }
@@ -163,12 +171,14 @@ export async function browse(id: LmaId, index: number, count: number, ctx: Smapi
   }
 }
 
-function recordingItem(recording: { id: string; date: string; venue: string }): BrowseItem {
+function recordingItem(recording: { id: string; date: string; venue: string; artist?: string }): BrowseItem {
   return {
     id: encodeId({ kind: "item", itemId: recording.id }),
     title: showLabel(recording.date, recording.venue),
     type: "album",
-    subtitle: recording.venue || undefined
+    subtitle: recording.venue || undefined,
+    artist: recording.artist || undefined,
+    albumArtUri: archiveThumbUrl(recording.id)
   };
 }
 

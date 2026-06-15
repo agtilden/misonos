@@ -3,7 +3,7 @@ import type { SourceBrowseItem, SourceItemKind, SourceTrackInfo } from "@misonos
 import { ArchiveClient } from "./archive.js";
 import type { LmaConfig } from "./config.js";
 import { decodeId, encodeId } from "./ids.js";
-import { browse, dispatch, type BrowseItem, type SmapiContext } from "./smapi.js";
+import { archiveThumbUrl, browse, dispatch, type BrowseItem, type SmapiContext } from "./smapi.js";
 import { parseSoapRequest, soapFault } from "./soap.js";
 
 // The bridge/web "source" path doesn't paginate — it expects the whole list in
@@ -97,7 +97,8 @@ async function trackInfo(rawId: string, ctx: SmapiContext): Promise<SourceTrackI
     album,
     durationSeconds: track.durationSeconds || undefined,
     url: ctx.client.trackUrl(item.id, track.filename),
-    mimeType: "audio/mpeg"
+    mimeType: "audio/mpeg",
+    albumArtUri: archiveThumbUrl(item.id)
   };
 }
 
@@ -110,7 +111,8 @@ function toSourceItem(item: BrowseItem): SourceBrowseItem {
     subtitle: item.subtitle ?? item.album,
     artist: item.artist,
     album: item.album,
-    durationSeconds: item.durationSeconds
+    durationSeconds: item.durationSeconds,
+    albumArtUri: item.albumArtUri
   };
 }
 

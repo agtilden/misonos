@@ -1,4 +1,4 @@
-import type { BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, EqPayload, EqPreset, EqState, Favorite, MusicServiceDiscovery, NowPlaying, PlaybackMode, Playlist, PlaylistItem, Preference, QueueItem, RecentlyViewedItem, RegisterCustomServiceResult, RepeatMode, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, SourceItemKind, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
+import type { Alarm, AlarmInput, BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, EqPayload, EqPreset, EqState, Favorite, MusicServiceDiscovery, NowPlaying, PlaybackMode, Playlist, PlaylistItem, Preference, QueueItem, RecentlyViewedItem, RegisterCustomServiceResult, RepeatMode, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, SourceItemKind, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
 
 export interface AddPlaylistItemInput {
   id: string;
@@ -87,6 +87,13 @@ export const bridgeApi = {
       method: "POST",
       body: JSON.stringify({ seconds })
     }),
+  alarms: () => request<Alarm[]>("/api/alarms"),
+  createAlarm: (body: AlarmInput) =>
+    request<Alarm[]>("/api/alarms", { method: "POST", body: JSON.stringify(body) }),
+  updateAlarm: (id: string, body: AlarmInput) =>
+    request<Alarm[]>(`/api/alarms/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(body) }),
+  deleteAlarm: (id: string) =>
+    request<Alarm[]>(`/api/alarms/${encodeURIComponent(id)}/delete`, { method: "POST", body: "{}" }),
   volume: (zoneId: string, payload: VolumePayload) =>
     request<VolumeState>(`/api/zones/${encodeURIComponent(zoneId)}/volume`, {
       method: "POST",

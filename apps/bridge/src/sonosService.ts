@@ -1,4 +1,4 @@
-import { firstDidlItem, parseDidlItems, type BridgeSnapshot, type EqPayload, type EqState, type NowPlaying, type PlaybackState, type QueueItem, type RepeatMode, type SonosGroup, type SonosZone, type TransportAction, type VolumePayload, type VolumeState } from "@misonos/sonos-protocol";
+import { attrText, firstDidlItem, parseDidlItems, selfClosingTags, type Alarm, type AlarmInput, type AlarmProgram, type AlarmRecurrence, type BridgeSnapshot, type EqPayload, type EqState, type NowPlaying, type PlaybackState, type QueueItem, type RepeatMode, type SonosGroup, type SonosZone, type TransportAction, type VolumePayload, type VolumeState } from "@misonos/sonos-protocol";
 import { loadConfig, type BridgeConfig } from "./config.js";
 import { discoverSsdp } from "./ssdp.js";
 import { callSoap, SonosSoapError, type ServiceType } from "./sonosSoap.js";
@@ -913,6 +913,68 @@ export class SonosService {
     return zone;
   }
 
+  // --- Alarms (AlarmClock; household-wide — call any reachable speaker) ---
+
+  async listAlarms(): Promise<Alarm[]> {
+    const seed = await this.firstVisibleZone();
+    return this.guardSoap(seed.uuid, async () => {
+      const result = await callSoap(seed.ipAddress, "AlarmClock", "ListAlarms");
+      const roomNames = new Map([...this.zones.values()].map((zone) => [zone.uuid, zone.name]));
+      return parseAlarmList(result.CurrentAlarmList ?? "", roomNames).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    });
+  }
+
+  async createAlarm(input: AlarmInput): Promise<Alarm[]> {
+    const seed = await this.firstVisibleZone();
+    const programUri = programUriFor(input.program, input.roomUuid, input.programUri);
+    await callSoap(seed.ipAddress, "AlarmClock", "CreateAlarm", {
+      StartLocalTime: normalizeClock(input.startTime),
+      Duration: formatClock(input.durationSeconds ?? 7200),
+      Recurrence: encodeRecurrence(input.recurrence),
+      Enabled: input.enabled ? 1 : 0,
+      RoomUUID: input.roomUuid,
+      ProgramURI: programUri,
+      ProgramMetaData: input.programMetaData ?? "",
+      PlayMode: input.playMode ?? "NORMAL",
+      Volume: clampVolume(input.volume),
+      IncludeLinkedZones: input.includeLinkedZones ? 1 : 0
+    });
+    return this.listAlarms();
+  }
+
+  async updateAlarm(id: string, input: AlarmInput): Promise<Alarm[]> {
+    const existing = (await this.listAlarms()).find((alarm) => alarm.id === id);
+    if (!existing) throw new Error(`Unknown alarm: ${id}`);
+    const roomUuid = input.roomUuid || existing.roomUuid;
+    // Preserve the program (URI + metadata) whenever the label is unchanged — covers
+    // Sonos-app alarms whose "other" content MiSonos can't author.
+    const programUri = input.program === existing.program
+      ? existing.programUri
+      : programUriFor(input.program, roomUuid, input.programUri ?? existing.programUri);
+    const programMetaData = programUri === existing.programUri ? existing.programMetaData : (input.programMetaData ?? "");
+    const seed = await this.firstVisibleZone();
+    await callSoap(seed.ipAddress, "AlarmClock", "UpdateAlarm", {
+      ID: id,
+      StartLocalTime: normalizeClock(input.startTime),
+      Duration: formatClock(input.durationSeconds ?? existing.durationSeconds),
+      Recurrence: encodeRecurrence(input.recurrence),
+      Enabled: input.enabled ? 1 : 0,
+      RoomUUID: roomUuid,
+      ProgramURI: programUri,
+      ProgramMetaData: programMetaData,
+      PlayMode: input.playMode ?? existing.playMode,
+      Volume: clampVolume(input.volume),
+      IncludeLinkedZones: input.includeLinkedZones ? 1 : 0
+    });
+    return this.listAlarms();
+  }
+
+  async deleteAlarm(id: string): Promise<Alarm[]> {
+    const seed = await this.firstVisibleZone();
+    await callSoap(seed.ipAddress, "AlarmClock", "DestroyAlarm", { ID: id });
+    return this.listAlarms();
+  }
+
   private async scanTrack(sourceId: string, trackId: string | undefined): Promise<SourceTrackInfo> {
     if (trackId) return fetchTrack(sourceId, trackId);
     return {
@@ -1018,6 +1080,81 @@ function formatSonosDuration(totalSeconds: number): string {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+// --- Alarm helpers (pure; exported for unit tests) ---
+
+export function encodeRecurrence(recurrence: AlarmRecurrence): string {
+  if (recurrence === "once") return "ONCE";
+  if (recurrence === "daily") return "DAILY";
+  if (recurrence === "weekdays") return "WEEKDAYS";
+  if (recurrence === "weekends") return "WEEKENDS";
+  const days = [...new Set(recurrence.days)].filter((day) => day >= 0 && day <= 6).sort((a, b) => a - b);
+  return days.length > 0 ? `ON_${days.join("")}` : "ONCE";
+}
+
+export function decodeRecurrence(value: string | undefined): AlarmRecurrence {
+  switch (value) {
+    case "DAILY": return "daily";
+    case "WEEKDAYS": return "weekdays";
+    case "WEEKENDS": return "weekends";
+    case "ONCE": case "": case undefined: return "once";
+  }
+  if (value.startsWith("ON_")) {
+    const days = [...value.slice(3)].map(Number).filter((day) => day >= 0 && day <= 6);
+    return days.length > 0 ? { days } : "once";
+  }
+  return "once"; // unknown future value → safe display default
+}
+
+// AlarmClock wants strict HH:MM:SS (2-digit hours, unlike formatSonosDuration).
+export function formatClock(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return [h, m, s].map((part) => part.toString().padStart(2, "0")).join(":");
+}
+
+export function normalizeClock(value: string): string {
+  const parts = value.split(":");
+  while (parts.length < 3) parts.push("00");
+  return parts.slice(0, 3).map((part) => (part || "0").padStart(2, "0")).join(":");
+}
+
+export function programOfUri(uri: string): AlarmProgram {
+  if (uri === "x-rincon-buzzer:0") return "chime";
+  if (/^x-rincon-queue:.+#0$/.test(uri)) return "queue";
+  return "other";
+}
+
+function programUriFor(program: AlarmProgram, roomUuid: string, fallbackUri?: string): string {
+  if (program === "chime") return "x-rincon-buzzer:0";
+  if (program === "queue") return `x-rincon-queue:${roomUuid}#0`;
+  if (fallbackUri) return fallbackUri;
+  throw new Error("Custom alarm program requires an explicit programUri");
+}
+
+export function parseAlarmList(xml: string, roomNames: Map<string, string>): Alarm[] {
+  return selfClosingTags(xml, "Alarm").map((block) => {
+    const programUri = attrText(block, "ProgramURI") ?? "";
+    const roomUuid = attrText(block, "RoomUUID") ?? "";
+    return {
+      id: attrText(block, "ID") ?? "",
+      startTime: attrText(block, "StartTime") ?? "00:00:00",
+      durationSeconds: parseSonosDuration(attrText(block, "Duration")) ?? 0,
+      recurrence: decodeRecurrence(attrText(block, "Recurrence")),
+      enabled: attrText(block, "Enabled") === "1",
+      roomUuid,
+      roomName: roomNames.get(roomUuid),
+      program: programOfUri(programUri),
+      programUri,
+      programMetaData: attrText(block, "ProgramMetaData") ?? "",
+      playMode: attrText(block, "PlayMode") ?? "NORMAL",
+      volume: clampVolume(Number.parseInt(attrText(block, "Volume") ?? "0", 10)),
+      includeLinkedZones: attrText(block, "IncludeLinkedZones") === "1"
+    };
+  });
 }
 
 // Sonos combines repeat + shuffle into a single AVTransport PlayMode string.
