@@ -106,6 +106,7 @@ pkill -f 'vite preview'                       2>/dev/null
 sleep 2
 
 # 3. Rebuild dist + bundle, recompile the launcher, re-sign, re-register login item.
+#    install.sh runs `npm install` first, so new deps from the pull are picked up.
 MISONOS_BRIDGE_PUBLIC_HOST=192.168.68.64 deploy/macos/install.sh
 
 # 4. Relaunch from the GUI session.
@@ -124,6 +125,19 @@ Sanity checks if step 5 is empty:
 lsof -nP -iTCP:4317 -sTCP:LISTEN          # bridge is listening?
 pgrep -fl 'MiSonos.app/Contents/MacOS'   # launcher resident (not exec'd away)?
 tail -n 40 ~/Library/Logs/misonos-bridge.err.log
+```
+
+**A source process is missing / never starts.** Each smapi source is a separate
+process+port (grateful 4319, ytmusic 4321, lma 4322, podcast 4323). If one doesn't
+appear, it almost certainly crashed on startup — most often a missing dependency
+after a pull added one (e.g. the podcast source's `fast-xml-parser` /
+`better-sqlite3`), which exits with `ERR_MODULE_NOT_FOUND` before it can `listen`.
+`install.sh` now runs `npm install`, but verify directly:
+
+```sh
+tail -n 30 ~/Library/Logs/misonos-podcast.log    # or -grateful/-phish/-ytmusic/-lma
+lsof -nP -iTCP:4323 -sTCP:LISTEN                  # podcast listening? (swap port per source)
+( cd ~/Documents/projects/misonos && npm install ) # if a dep is missing
 ```
 
 **Re-granting after an update.** The Local Network grant is tied to the bundle's

@@ -93,6 +93,13 @@ PLIST
 # C binary carries the bundle's code identity + NSLocalNetworkUsageDescription, so
 # the prompt fires for MiSonos.app and the child node inherits the grant. Spawn
 # depth is irrelevant; a live app-identity parent is what matters.
+# Install deps first. A pull can add new packages (or native modules like the
+# podcast source's better-sqlite3); without this the smapi process whose dep is
+# missing crashes on startup with ERR_MODULE_NOT_FOUND and never listens — so the
+# source silently never appears. stdout is quiet; errors still surface (set -e).
+echo "Installing dependencies (picks up any new packages from a pull)"
+( cd "$REPO" && npm install ) >/dev/null
+
 echo "Building the bridge (dist) so the bundle can run it directly"
 ( cd "$REPO" && npm run build -w @misonos/sonos-protocol && npm run build -w @misonos/bridge ) >/dev/null
 
