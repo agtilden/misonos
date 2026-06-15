@@ -7,6 +7,7 @@ import { SonosService } from "./sonosService.js";
 import type { Store } from "./store/index.js";
 import { proxyStream } from "./streamProxy.js";
 import { serveArt } from "./artProxy.js";
+import { deleteSourceIcon, listSourceIcons, saveSourceIcon, serveSourceIcon } from "./sourceIcons.js";
 import path from "node:path";
 
 type RouteHandler = (
@@ -19,6 +20,7 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
   const clients = new Set<ServerResponse>();
   const sonosEvents = new SonosEventManager(config);
   const artCacheDir = path.join(path.dirname(config.dbPath), "art-cache");
+  const sourceIconsDir = path.join(path.dirname(config.dbPath), "source-icons");
 
   const sendEvent = (event: BridgeEvent) => {
     for (const client of clients) {
@@ -228,6 +230,32 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
 
     if (request.method === "GET" && url.pathname === "/api/sources") {
       return json(response, await service.listSources());
+    }
+
+    // Custom per-source logos (uploaded from Settings). List/serve are public GETs;
+    // upload (raw image bytes) and reset use POST to fit the existing CORS allowlist.
+    if (request.method === "GET" && url.pathname === "/api/source-icons") {
+      return json(response, await listSourceIcons(sourceIconsDir));
+    }
+
+    const sourceIconMatch = url.pathname.match(/^\/api\/source-icons\/([^/]+)$/);
+    if (sourceIconMatch) {
+      const sourceId = decodeURIComponent(sourceIconMatch[1]);
+      if (request.method === "GET" || request.method === "HEAD") {
+        return serveSourceIcon(sourceIconsDir, sourceId, response, request.method === "HEAD");
+      }
+      if (request.method === "POST") {
+        const contentType = request.headers["content-type"] ?? "";
+        const buf = await readBuffer(request);
+        const result = await saveSourceIcon(sourceIconsDir, sourceId, contentType, buf);
+        return result.ok ? json(response, result.meta, 201) : json(response, { error: result.error }, result.status);
+      }
+    }
+
+    const sourceIconDeleteMatch = url.pathname.match(/^\/api\/source-icons\/([^/]+)\/delete$/);
+    if (request.method === "POST" && sourceIconDeleteMatch) {
+      const removed = await deleteSourceIcon(sourceIconsDir, decodeURIComponent(sourceIconDeleteMatch[1]));
+      return removed ? empty(response, 204) : json(response, { error: "No custom icon" }, 404);
     }
 
     const streamMatch = url.pathname.match(/^\/api\/stream\/([^/]+)\/([^/]+?)(?:\.[A-Za-z0-9]{2,5})?(?:\/[^/]+)?$/);
@@ -566,9 +594,13 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
 }
 
 async function readText(request: IncomingMessage): Promise<string> {
+  return (await readBuffer(request)).toString("utf8");
+}
+
+async function readBuffer(request: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
 }
 
 function errorMessage(error: unknown): string {

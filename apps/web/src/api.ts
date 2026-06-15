@@ -166,8 +166,24 @@ export const bridgeApi = {
   playPlaylist: (id: number, groupId: string, mode: PlaybackMode) =>
     request<NowPlaying>(`/api/playlists/${id}/play`, { method: "POST", body: JSON.stringify({ groupId, mode }) }),
   savePlaylistFromQueue: (name: string, groupId: string) =>
-    request<{ playlist: Playlist; saved: number; skipped: number }>("/api/playlists/from-queue", { method: "POST", body: JSON.stringify({ name, groupId }) })
+    request<{ playlist: Playlist; saved: number; skipped: number }>("/api/playlists/from-queue", { method: "POST", body: JSON.stringify({ name, groupId }) }),
+  sourceIcons: () => request<SourceIconMeta[]>("/api/source-icons"),
+  uploadSourceIcon: (sourceId: string, file: File) =>
+    request<SourceIconMeta>(`/api/source-icons/${encodeURIComponent(sourceId)}`, {
+      method: "POST",
+      body: file,
+      // Send the raw image bytes; override the JSON default content type.
+      headers: { "Content-Type": file.type || "application/octet-stream" }
+    }),
+  deleteSourceIcon: (sourceId: string) =>
+    request<void>(`/api/source-icons/${encodeURIComponent(sourceId)}/delete`, { method: "POST", body: "{}" })
 };
+
+export interface SourceIconMeta {
+  sourceId: string;
+  ext: string;
+  updatedAt: string;
+}
 
 export function subscribeBridgeEvents(onEvent: (event: BridgeEvent) => void, onError: () => void): () => void {
   const source = new EventSource("/api/events");

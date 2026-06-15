@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Play, Plus, RefreshCw, Repeat, Repeat1, Settings, Shuffle, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -7,7 +7,7 @@ import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
-import { SourcePicker } from "./SourcePicker.js";
+import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions } from "./groupPalette.js";
 import { LAST_GROUP_PREF, LAST_SOURCE_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
@@ -40,11 +40,25 @@ export function App() {
   const [message, setMessage] = useState("Ready");
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
   const [showDevPanels, setShowDevPanels] = useState<boolean>(() => readLocalPref(SHOW_DEV_PANELS_PREF) ?? false);
+  // sourceId → version token for user-uploaded service logos (shared by the source
+  // dropdown and the Settings upload widget); the token busts the browser cache.
+  const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const groupEditQueueRef = useRef<PendingGroupEdit[]>([]);
   const groupEditProcessingRef = useRef(false);
   // Best-known "last selected group" membership key — seeded synchronously from the
   // local cache, then refreshed from the shared bridge store on mount.
   const storedGroupKeyRef = useRef<string>(readStoredGroupKey());
+
+  const refreshCustomIcons = useCallback(async () => {
+    try {
+      const metas = await bridgeApi.sourceIcons();
+      setCustomIcons(Object.fromEntries(metas.map((meta) => [meta.sourceId, meta.updatedAt])));
+    } catch {
+      /* custom logos are optional — ignore load failures */
+    }
+  }, []);
+
+  useEffect(() => { void refreshCustomIcons(); }, [refreshCustomIcons]);
 
   const displayGroups = useMemo(() => {
     const next = applyPendingGroupEdits(groups, pendingGroupEdits);
@@ -487,6 +501,7 @@ export function App() {
           groups={displayGroups}
           selectedGroupId={selectedGroup?.id}
           onSelectGroup={setSelectedGroupId}
+          customIcons={customIcons}
         />
       </section>
 
@@ -499,6 +514,7 @@ export function App() {
               setPref(SHOW_DEV_PANELS_PREF, value);
             }}
           />
+          <SourceLogoSettings customIcons={customIcons} onChanged={() => void refreshCustomIcons()} />
           <Equalizer zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
           <Alarms zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
           <AboutSystem />
@@ -735,6 +751,7 @@ interface SourceBrowserProps {
   groups: SonosGroup[];
   selectedGroupId?: string;
   onSelectGroup: (groupId: string) => void;
+  customIcons: Record<string, string>;
 }
 
 interface BrowseCrumb {
@@ -748,7 +765,7 @@ function BrowseThumb({ src }: { src?: string }) {
   return <img className="browse-thumb" src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
 }
 
-function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowserProps) {
+function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: SourceBrowserProps) {
   const [sources, setSources] = useState<Awaited<ReturnType<typeof bridgeApi.listSources>> | null>(null);
   const [sourceId, setSourceId] = useState<string | null>(() => readLocalPref(LAST_SOURCE_PREF));
   const sourceInitializedRef = useRef(false);
@@ -981,6 +998,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup }: SourceBrowser
             sources={sources ?? []}
             value={sourceId}
             onChange={(id) => { persistSourceId(id); setStack([]); clearSearch(); }}
+            customIcons={customIcons}
           />
         </label>
         <label>
@@ -1537,6 +1555,101 @@ function Equalizer({ zones }: EqualizerProps) {
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+interface SourceLogoSettingsProps {
+  customIcons: Record<string, string>;
+  onChanged: () => void;
+}
+
+function SourceLogoSettings({ customIcons, onChanged }: SourceLogoSettingsProps) {
+  const [sources, setSources] = useState<Awaited<ReturnType<typeof bridgeApi.listSources>>>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const inputs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    void bridgeApi.listSources().then(setSources).catch(() => undefined);
+  }, []);
+
+  const upload = useCallback(async (sourceId: string, file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setError("Please choose an image file."); return; }
+    setBusyId(sourceId);
+    setError("");
+    try {
+      await bridgeApi.uploadSourceIcon(sourceId, file);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setBusyId(null);
+    }
+  }, [onChanged]);
+
+  const reset = useCallback(async (sourceId: string) => {
+    setBusyId(sourceId);
+    setError("");
+    try {
+      await bridgeApi.deleteSourceIcon(sourceId);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setBusyId(null);
+    }
+  }, [onChanged]);
+
+  return (
+    <section className="queue-panel" aria-label="Service logos">
+      <div className="section-heading">
+        <h2>Service logos</h2>
+      </div>
+      <p className="pref-hint">Upload your own logo for a music service. SVG, PNG, JPEG, WebP, or GIF up to 2 MB.</p>
+      {error ? <div className="empty-panel error-panel"><span>{error}</span></div> : null}
+      <ul className="logo-list">
+        {sources.map((source) => {
+          const hasCustom = !!customIcons[source.id];
+          const busy = busyId === source.id;
+          return (
+            <li key={source.id} className="logo-row">
+              <ServiceIcon sourceId={source.id} customVersion={customIcons[source.id]} />
+              <span className="logo-name">{source.name}</span>
+              <input
+                ref={(element) => { inputs.current[source.id] = element; }}
+                type="file"
+                accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif"
+                hidden
+                onChange={(event) => { void upload(source.id, event.target.files?.[0]); event.target.value = ""; }}
+              />
+              <button
+                type="button"
+                className="browse-action"
+                title="Upload logo"
+                aria-label={`Upload logo for ${source.name}`}
+                disabled={busy}
+                onClick={() => inputs.current[source.id]?.click()}
+              >
+                <Upload size={15} />
+              </button>
+              {hasCustom ? (
+                <button
+                  type="button"
+                  className="browse-action"
+                  title="Reset to default"
+                  aria-label={`Reset ${source.name} logo`}
+                  disabled={busy}
+                  onClick={() => void reset(source.id)}
+                >
+                  <RotateCcw size={15} />
+                </button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
