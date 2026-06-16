@@ -589,7 +589,7 @@ export function App() {
       >
         <SourceBrowser
           groups={displayGroups}
-          selectedGroupId={selectedGroup?.id}
+          selectedGroupId={selectedGroupId || selectedGroup?.id}
           onSelectGroup={setSelectedGroupId}
           customIcons={customIcons}
         />
