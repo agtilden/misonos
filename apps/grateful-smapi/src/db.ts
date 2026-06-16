@@ -66,16 +66,16 @@ export class GratefulDb {
   }
 
   concertsBySong(songId: string): ConcertRow[] {
-    // setlist.song_id is unpopulated in the archive DB; setlist rows link to songs by
-    // matching title instead, so join setlist -> song on title and filter by song id.
+    // setlist.song_id is resolved from canonical song titles at build time
+    // (see https://github.com/agtilden/grateful-dead-db), so filter by it
+    // directly via the idx_setlist_song index.
     return this.db.prepare(
       "SELECT DISTINCT c.id AS id, c.date AS date, COALESCE(v.title, '') AS venueTitle " +
       "FROM setlist s " +
-      "JOIN song so ON so.title = s.title " +
       "JOIN recording r ON r.id = s.recording_id " +
       "JOIN concert c ON c.id = r.concert_id " +
       "LEFT JOIN venue v ON v.id = c.venue_id " +
-      "WHERE so.id = ? ORDER BY c.date"
+      "WHERE s.song_id = ? ORDER BY c.date"
     ).all(songId) as ConcertRow[];
   }
 
