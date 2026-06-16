@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300" role="img">
+  <rect x="6" y="6" width="288" height="288" rx="22" fill="#f6f4ef" stroke="#dcd7cd" stroke-width="2"/>
+
+  <!-- blade -->
+  <path d="M132 132 L244 132 Q272 138 280 150 Q214 170 132 170 Z" fill="#cfd4d8" stroke="#9aa0a6" stroke-width="1.5"/>
+  <path d="M132 137 L246 137" stroke="#eef1f3" stroke-width="2" stroke-linecap="round"/>
+  <!-- bolster -->
+  <rect x="124" y="132" width="9" height="38" rx="2" fill="#b6bbc0"/>
+  <!-- handle -->
+  <rect x="40" y="139" width="86" height="24" rx="9" fill="#1c1c1c"/>
+  <circle cx="62" cy="151" r="3.4" fill="#8a8f93"/>
+  <circle cx="83" cy="151" r="3.4" fill="#8a8f93"/>
+  <circle cx="104" cy="151" r="3.4" fill="#8a8f93"/>
+  <!-- label -->
+  <text x="150" y="214" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="26" font-weight="700" letter-spacing="3" fill="#2a2d2c">MISONO</text>
+  <text x="150" y="252" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="34" font-weight="800" fill="#2a2d2c">UX10</text>
+
+</svg>

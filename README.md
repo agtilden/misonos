@@ -2,6 +2,24 @@
 
 Modern TypeScript Sonos controller targeting fast LAN control.
 
+## Where the name comes from
+
+<table align="center">
+  <tr align="center">
+    <td><img src="docs/rebus/misono-ux10.svg" width="150" alt="Misono UX10 chef's knife"></td>
+    <td><b>+</b></td>
+    <td><img src="docs/rebus/goes-to-11.svg" width="150" alt="An amplifier that goes to 11"></td>
+    <td><b>=</b></td>
+    <td><img src="docs/rebus/misonos-ux11.svg" width="150" alt="MiSonos UX11"></td>
+  </tr>
+</table>
+
+**Misono UX10** is the chef's knife from the Japanese maker *Misono* — that gets
+us *Mi&hairsp;sono* and *UX10*. And *UX* is also **U**ser **E**xperience, the
+thing Sonos famously fumbled in its app redesign. Then, like the amp in *This Is
+Spinal Tap* — *"if we need that extra push over the cliff, you know what we do?"*
+— ours **goes to 11**. So UX10 + 11 = **MiSonos UX11**.
+
 ## Screenshots
 
 <!-- Drop PNGs into docs/screenshots/ with these names (see docs/screenshots/README.md). -->

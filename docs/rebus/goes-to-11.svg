@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300" role="img">
+  <rect x="6" y="6" width="288" height="288" rx="22" fill="#f6f4ef" stroke="#dcd7cd" stroke-width="2"/>
+
+  <text x="104.0" y="208.3" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">0</text>
+  <text x="72.6" y="178.4" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">1</text>
+  <text x="58.4" y="137.4" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">2</text>
+  <text x="64.6" y="94.4" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">3</text>
+  <text x="89.8" y="59.1" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">4</text>
+  <text x="128.3" y="39.2" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">5</text>
+  <text x="171.7" y="39.2" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">6</text>
+  <text x="210.2" y="59.1" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">7</text>
+  <text x="235.4" y="94.4" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">8</text>
+  <text x="241.6" y="137.4" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">9</text>
+  <text x="227.4" y="178.4" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#4a4d4c">10</text>
+  <text x="196.0" y="212.4" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="30" font-weight="800" fill="#c0392b">11</text>
+  <circle cx="150" cy="122" r="58" fill="#2a2d2c"/>
+  <circle cx="150" cy="122" r="58" fill="none" stroke="#0e0f0f" stroke-width="2"/>
+  <circle cx="150" cy="122" r="49" fill="none" stroke="#43474600" stroke-width="0"/>
+  <line x1="150" y1="122" x2="173.0" y2="161.8" stroke="#f6f4ef" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="150" cy="122" r="5" fill="#f6f4ef"/>
+  <text x="150" y="258" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="800" letter-spacing="2" fill="#2a2d2c">GOES TO 11</text>
+
+</svg>
