@@ -35,6 +35,10 @@ export interface QueueItem {
   albumArtUri?: string;
   uri?: string;
   itemClass?: string;
+  // Recovered source reference (when the URI maps back to a known source), so the
+  // track can be favorited directly from the queue.
+  sourceId?: string;
+  trackId?: string;
 }
 
 export type RepeatMode = "none" | "all" | "one";

@@ -1504,6 +1504,30 @@ h2 {
   background: rgba(255, 138, 128, 0.12);
 }
 
+.queue-action {
+  flex: 0 0 auto;
+  width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(242, 240, 232, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #aeb4ad;
+  cursor: pointer;
+}
+
+.queue-action:hover {
+  color: #91d3c4;
+  border-color: rgba(145, 211, 196, 0.5);
+  background: rgba(145, 211, 196, 0.12);
+}
+
+.queue-action.on {
+  color: #91d3c4;
+  border-color: rgba(145, 211, 196, 0.5);
+}
+
 .queue-indicator {
   display: inline-flex;
   align-items: center;
