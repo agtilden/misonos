@@ -2629,3 +2629,9 @@ small {
 .add-to-playlist-list small {
   color: #9aa39f;
 }
+
+/* "This device" Play-to option uses an icon instead of a color chip. */
+.group-device-icon {
+  flex: 0 0 auto;
+  color: #91d3c4;
+}

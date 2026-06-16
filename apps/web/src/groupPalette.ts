@@ -11,6 +11,9 @@ export interface GroupOption {
   color: string;
   name: string;
   zoneList: string;
+  // Synthetic "This device" target — rendered with an icon instead of a color chip,
+  // and excluded from the group editor.
+  device?: boolean;
 }
 
 /**
