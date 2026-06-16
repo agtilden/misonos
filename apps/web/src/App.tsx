@@ -1,15 +1,16 @@
 import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
 import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
+import { useDialogs } from "./dialogs.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions } from "./groupPalette.js";
-import { LAST_GROUP_PREF, LAST_SOURCE_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
+import { LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
 const GroupEditor = lazy(() => import("./GroupEditor.js").then((module) => ({ default: module.GroupEditor })));
 const LibraryView = lazy(() => import("./LibraryView.js").then((module) => ({ default: module.LibraryView })));
@@ -40,6 +41,14 @@ export function App() {
   const [message, setMessage] = useState("Ready");
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
   const [showDevPanels, setShowDevPanels] = useState<boolean>(() => readLocalPref(SHOW_DEV_PANELS_PREF) ?? false);
+  // Volume ceiling (0–100): the sliders span 0..maxVolume, so the controller can't go louder.
+  const [maxVolume, setMaxVolume] = useState<number>(() => readLocalPref(MAX_VOLUME_PREF) ?? 100);
+  const dialogs = useDialogs();
+  // Confirm a large (>30) volume jump — e.g. an accidental tap on the slider track.
+  const confirmVolumeJump = useCallback(async (previous: number | undefined, next: number) => {
+    if (typeof previous !== "number" || Math.abs(next - previous) <= 30) return true;
+    return dialogs.confirm({ message: `Change volume from ${previous}% to ${next}%?`, confirmLabel: "Change volume" });
+  }, [dialogs]);
   // sourceId → version token for user-uploaded service logos (shared by the source
   // dropdown and the Settings upload widget); the token busts the browser cache.
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
@@ -140,6 +149,9 @@ export function App() {
     });
     void loadPref(SHOW_DEV_PANELS_PREF).then((value) => {
       if (!cancelled && value !== null) setShowDevPanels(value);
+    });
+    void loadPref(MAX_VOLUME_PREF).then((value) => {
+      if (!cancelled && value !== null) setMaxVolume(Math.min(100, Math.max(0, value)));
     });
     return () => { cancelled = true; };
   }, []);
@@ -311,7 +323,7 @@ export function App() {
 
   const saveQueueAsPlaylist = async () => {
     if (!selectedGroup) return;
-    const name = window.prompt("Save current queue as playlist:")?.trim();
+    const name = (await dialogs.prompt({ message: "Save current queue as playlist:", placeholder: "Playlist name", confirmLabel: "Save" }))?.trim();
     if (!name) return;
     try {
       const result = await bridgeApi.savePlaylistFromQueue(name, selectedGroup.id);
@@ -324,7 +336,7 @@ export function App() {
 
   const setZoneVolume = async (zoneId: string, volume: number) => {
     const previous = zoneVolumes[zoneId]?.volume;
-    if (!confirmVolumeJump(previous, volume)) return;
+    if (!(await confirmVolumeJump(previous, volume))) return;
     const next = await bridgeApi.volume(zoneId, { volume });
     setZoneVolumes((current) => ({ ...current, [next.id]: next }));
   };
@@ -337,10 +349,24 @@ export function App() {
 
   const setSelectedGroupVolume = async (volume: number) => {
     if (!selectedGroup) return;
-    if (!confirmVolumeJump(groupVolume?.volume, volume)) return;
+    if (!(await confirmVolumeJump(groupVolume?.volume, volume))) return;
     setGroupVolume(await bridgeApi.setGroupVolume(selectedGroup.id, { volume }));
     void loadVolumes(selectedGroup);
   };
+
+  // When the user lowers the volume cap, pull any currently-louder rooms down to it so
+  // the ceiling takes effect immediately (and the sliders aren't stuck above their max).
+  const enforceVolumeCap = useCallback(async (cap: number) => {
+    const overZones = Object.values(zoneVolumes).filter((entry) => entry.volume > cap);
+    await Promise.all(overZones.map(async (entry) => {
+      const next = await bridgeApi.volume(entry.id, { volume: cap });
+      setZoneVolumes((current) => ({ ...current, [next.id]: next }));
+    }));
+    if (selectedGroup && groupVolume && groupVolume.volume > cap) {
+      setGroupVolume(await bridgeApi.setGroupVolume(selectedGroup.id, { volume: cap }));
+      void loadVolumes(selectedGroup);
+    }
+  }, [zoneVolumes, selectedGroup, groupVolume, loadVolumes]);
 
   const toggleGroupMute = async () => {
     if (!selectedGroup || !groupVolume) return;
@@ -370,6 +396,11 @@ export function App() {
     if (!selectedGroup) return;
     setNowPlaying(await bridgeApi.playQueueIndex(selectedGroup.id, index));
     void loadNowPlaying(selectedGroup.id);
+  };
+
+  const removeQueueItem = async (index: number) => {
+    if (!selectedGroup) return;
+    setQueue(await bridgeApi.removeQueueTrack(selectedGroup.id, index));
   };
 
   const makeZoneStandalone = async (zoneId: string) => {
@@ -513,6 +544,12 @@ export function App() {
               setShowDevPanels(value);
               setPref(SHOW_DEV_PANELS_PREF, value);
             }}
+            maxVolume={maxVolume}
+            onMaxVolumeChange={(value) => {
+              setMaxVolume(value);
+              setPref(MAX_VOLUME_PREF, value);
+            }}
+            onMaxVolumeCommit={(value) => void enforceVolumeCap(value)}
           />
           <SourceLogoSettings customIcons={customIcons} onChanged={() => void refreshCustomIcons()} />
           <Equalizer zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
@@ -655,6 +692,7 @@ export function App() {
               label={primaryVolumeLabel}
               value={primaryVolume?.volume ?? 0}
               muted={primaryVolume?.muted ?? false}
+              maxVolume={maxVolume}
               disabled={!primaryVolume}
               onChange={setPrimaryVolume}
               onMute={togglePrimaryMute}
@@ -678,6 +716,7 @@ export function App() {
                       label={zone.name}
                       value={zoneVolumes[zone.id]?.volume ?? 0}
                       muted={zoneVolumes[zone.id]?.muted ?? false}
+                      maxVolume={maxVolume}
                       disabled={!zoneVolumes[zone.id]}
                       onChange={(volume) => setZoneVolume(zone.id, volume)}
                       onMute={() => toggleZoneMute(zone.id)}
@@ -721,6 +760,7 @@ export function App() {
               activeIndex={activeQueueIndex}
               isPlaying={nowPlaying?.state === "PLAYING"}
               onPlay={(index) => void playQueueItem(index + 1)}
+              onRemove={(index) => void removeQueueItem(index)}
             />
           )}
         </section>
@@ -771,6 +811,23 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const sourceInitializedRef = useRef(false);
   const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ item: SourceBrowseItem; x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
+  // The action menu opens at the click point, which is near the right edge for the
+  // "…" button — nudge it back on-screen after measuring its rendered size.
+  useLayoutEffect(() => {
+    if (!menu) { setMenuPos(null); return; }
+    const rect = menuRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const margin = 8;
+    let left = menu.x;
+    let top = menu.y;
+    const overflowX = rect.right - (window.innerWidth - margin);
+    if (overflowX > 0) left -= overflowX;
+    const overflowY = rect.bottom - (window.innerHeight - margin);
+    if (overflowY > 0) top -= overflowY;
+    setMenuPos({ left: Math.max(margin, left), top: Math.max(margin, top) });
+  }, [menu]);
   const [addTo, setAddTo] = useState<SourceBrowseItem | null>(null);
 
   const persistSourceId = useCallback((id: string) => {
@@ -1313,7 +1370,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
       {menu ? (
         <>
           <div className="action-menu-backdrop" onClick={() => setMenu(null)} onContextMenu={(event) => { event.preventDefault(); setMenu(null); }} />
-          <div className="action-menu" style={{ left: menu.x, top: menu.y }} role="menu">
+          <div ref={menuRef} className="action-menu" style={{ left: menuPos?.left ?? menu.x, top: menuPos?.top ?? menu.y }} role="menu">
             <button type="button" className="action-menu-item" onClick={() => { void enqueueItem(menu.item, "next"); setMenu(null); }}>
               <ListPlus size={16} /> <span className="action-menu-item-label"><span>Play next</span></span>
             </button>
@@ -1792,14 +1849,37 @@ function SourceLogoSettings({ customIcons, onChanged }: SourceLogoSettingsProps)
 interface PreferencesProps {
   showDevPanels: boolean;
   onShowDevPanelsChange: (value: boolean) => void;
+  maxVolume: number;
+  onMaxVolumeChange: (value: number) => void;
+  onMaxVolumeCommit: (value: number) => void;
 }
 
-function Preferences({ showDevPanels, onShowDevPanelsChange }: PreferencesProps) {
+function Preferences({ showDevPanels, onShowDevPanelsChange, maxVolume, onMaxVolumeChange, onMaxVolumeCommit }: PreferencesProps) {
   return (
     <section className="queue-panel" aria-label="Preferences">
       <div className="section-heading">
         <h2>Preferences</h2>
       </div>
+      <label className="pref-row">
+        <span className="pref-label">
+          <strong>Maximum volume</strong>
+          <small>The volume sliders span 0–this, so the controller never goes louder.</small>
+        </span>
+        <span className="pref-volume">
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={maxVolume}
+            aria-label="Maximum volume"
+            onChange={(event) => onMaxVolumeChange(Number.parseInt(event.currentTarget.value, 10))}
+            onPointerUp={(event) => onMaxVolumeCommit(Number.parseInt(event.currentTarget.value, 10))}
+            onKeyUp={(event) => onMaxVolumeCommit(Number.parseInt(event.currentTarget.value, 10))}
+          />
+          <output>{maxVolume}</output>
+        </span>
+      </label>
       <label className="pref-row">
         <span className="pref-label">
           <strong>Show developer panels</strong>
@@ -2316,9 +2396,10 @@ interface QueueListProps {
   activeIndex: number;
   isPlaying: boolean;
   onPlay: (index: number) => void;
+  onRemove: (index: number) => void;
 }
 
-function QueueList({ queue, activeIndex, isPlaying, onPlay }: QueueListProps) {
+function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove }: QueueListProps) {
   const listRef = useRef<HTMLOListElement | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
 
@@ -2354,14 +2435,18 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay }: QueueListProps) {
             ref={isActive ? activeItemRef : undefined}
             className={isActive ? "queue-item active" : "queue-item"}
           >
-            <button type="button" onClick={() => onPlay(index)} aria-current={isActive ? "true" : undefined}>
+            <button type="button" className="queue-item-main" onClick={() => onPlay(index)} aria-current={isActive ? "true" : undefined}>
               <span className="queue-indicator" aria-hidden="true">
                 {isActive ? <AudioLines size={16} className={isPlaying ? "queue-indicator-active playing" : "queue-indicator-active"} /> : <span className="queue-track-number">{index + 1}</span>}
               </span>
+              <BrowseThumb src={item.albumArtUri} />
               <span className="queue-meta">
                 <span>{item.title}</span>
                 <small>{[item.artist, item.album].filter(Boolean).join(" - ")}</small>
               </span>
+            </button>
+            <button type="button" className="queue-remove" title="Remove from queue" aria-label={`Remove ${item.title} from queue`} onClick={() => onRemove(index)}>
+              <X size={16} />
             </button>
           </li>
         );
@@ -2451,6 +2536,7 @@ interface VolumeControlProps {
   label: string;
   value: number;
   muted: boolean;
+  maxVolume?: number;
   disabled?: boolean;
   onChange: (volume: number) => void;
   onMute: () => void;
@@ -2458,7 +2544,7 @@ interface VolumeControlProps {
   swallowFirstAdjustment?: boolean;
 }
 
-function VolumeControl({ label, value, muted, disabled = false, onChange, onMute, onSliderPointerDown, swallowFirstAdjustment = false }: VolumeControlProps) {
+function VolumeControl({ label, value, muted, maxVolume = 100, disabled = false, onChange, onMute, onSliderPointerDown, swallowFirstAdjustment = false }: VolumeControlProps) {
   const ignoreUntilRelease = useRef(false);
   return (
     <div className="volume-control">
@@ -2469,8 +2555,8 @@ function VolumeControl({ label, value, muted, disabled = false, onChange, onMute
         aria-label={`${label} volume`}
         type="range"
         min="0"
-        max="100"
-        value={value}
+        max={maxVolume}
+        value={Math.min(value, maxVolume)}
         disabled={disabled}
         onPointerDown={() => {
           if (swallowFirstAdjustment) ignoreUntilRelease.current = true;
@@ -2531,12 +2617,6 @@ function formatDuration(totalSeconds: number): string {
 
 function readStoredGroupKey(): string {
   return readLocalPref(LAST_GROUP_PREF) ?? "";
-}
-
-function confirmVolumeJump(previous: number | undefined, next: number): boolean {
-  if (typeof previous !== "number") return true;
-  if (Math.abs(next - previous) <= 30) return true;
-  return window.confirm(`Change volume from ${previous} to ${next}?`);
 }
 
 function membershipKey(group: SonosGroup): string {

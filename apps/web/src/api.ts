@@ -67,6 +67,11 @@ export const bridgeApi = {
       method: "POST",
       body: JSON.stringify({ index })
     }),
+  removeQueueTrack: (groupId: string, index: number) =>
+    request<QueueItem[]>(`/api/groups/${encodeURIComponent(groupId)}/queue/remove`, {
+      method: "POST",
+      body: JSON.stringify({ index })
+    }),
   seek: (groupId: string, positionSeconds: number) =>
     request<NowPlaying>(`/api/groups/${encodeURIComponent(groupId)}/seek`, {
       method: "POST",

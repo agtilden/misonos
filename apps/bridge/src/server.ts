@@ -118,6 +118,13 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, nowPlaying);
     }
 
+    const queueRemoveMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/queue\/remove$/);
+    if (request.method === "POST" && queueRemoveMatch) {
+      const body = await readJson<{ index: number }>(request);
+      if (!Number.isInteger(body.index) || body.index < 0) return json(response, { error: "Invalid queue index" }, 400);
+      return json(response, await service.removeQueueTrack(decodeURIComponent(queueRemoveMatch[1]), body.index));
+    }
+
     const seekMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/seek$/);
     if (request.method === "POST" && seekMatch) {
       const body = await readJson<{ positionSeconds: number }>(request);

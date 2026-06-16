@@ -22,9 +22,21 @@ function boolPref(bridgeKey: string, localKey: string): PrefDef<boolean> {
   return { bridgeKey, localKey, decode: (raw) => raw === "true", encode: (value) => (value ? "true" : "false") };
 }
 
+function numberPref(bridgeKey: string, localKey: string): PrefDef<number> {
+  return {
+    bridgeKey,
+    localKey,
+    decode: (raw) => { const parsed = Number.parseInt(raw, 10); return Number.isFinite(parsed) ? parsed : null; },
+    encode: (value) => String(value)
+  };
+}
+
 export const LAST_GROUP_PREF = stringPref("lastGroupKey", "misonos:lastGroupKey");
 export const LAST_SOURCE_PREF = stringPref("lastSourceId", "misonos:lastSourceId");
 export const SHOW_DEV_PANELS_PREF = boolPref("showDevPanels", "misonos:showDevPanels");
+// Caps how high the volume sliders can go (0–100). The slider keeps its full width
+// but represents 0..maxVolume, so the controller never sends a higher value.
+export const MAX_VOLUME_PREF = numberPref("maxVolume", "misonos:maxVolume");
 
 export function readLocalPref<T>(pref: PrefDef<T>): T | null {
   if (typeof window === "undefined") return null;

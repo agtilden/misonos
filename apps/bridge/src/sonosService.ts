@@ -312,6 +312,20 @@ export class SonosService {
     });
   }
 
+  async removeQueueTrack(groupId: string, index: number): Promise<QueueItem[]> {
+    const group = await this.requireGroup(groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    await this.guardSoap(coordinator.uuid, async () => {
+      await callSoap(coordinator.ipAddress, "AVTransport", "RemoveTrackRangeFromQueue", {
+        InstanceID: 0,
+        UpdateID: 0,
+        StartingIndex: index + 1, // Sonos queue positions are 1-based
+        NumberOfTracks: 1
+      });
+    });
+    return this.queue(groupId);
+  }
+
   async transport(groupId: string, action: TransportAction): Promise<NowPlaying> {
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);

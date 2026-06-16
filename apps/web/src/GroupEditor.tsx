@@ -386,6 +386,7 @@ function GroupFlow({ groups, selectedGroupId, onSelectGroup, onJoinZoneGroup, on
     [pickedZone, openMenu, openEq]
   );
   const eqGroup = eqGroupId ? groups.find((group) => group.id === eqGroupId) ?? null : null;
+  const eqPalette = eqGroup ? (assignGroupPalettes(groups).get(eqGroup.coordinatorId) ?? paletteForGroup(eqGroup.coordinatorId)) : null;
 
   const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: FALLBACK_CANVAS_WIDTH, h: FALLBACK_CANVAS_HEIGHT });
 
@@ -567,10 +568,11 @@ function GroupFlow({ groups, selectedGroupId, onSelectGroup, onJoinZoneGroup, on
         onSplit={(zoneId) => callbacksRef.current.onUngroupZone(zoneId)}
       />
     ) : null}
-    {eqGroup ? (
+    {eqGroup && eqPalette ? (
       <GroupEqModal
         group={eqGroup}
-        color={(assignGroupPalettes(groups).get(eqGroup.coordinatorId) ?? paletteForGroup(eqGroup.coordinatorId)).color}
+        color={eqPalette.color}
+        colorName={eqPalette.name}
         onClose={() => setEqGroupId(null)}
       />
     ) : null}
@@ -578,7 +580,7 @@ function GroupFlow({ groups, selectedGroupId, onSelectGroup, onJoinZoneGroup, on
   );
 }
 
-function GroupEqModal({ group, color, onClose }: { group: SonosGroup; color: string; onClose: () => void }) {
+function GroupEqModal({ group, color, colorName, onClose }: { group: SonosGroup; color: string; colorName: string; onClose: () => void }) {
   const rooms = useMemo(() => group.zones.filter((zone) => zone.visible), [group]);
   const coordinator = useMemo(() => rooms.find((zone) => zone.uuid === group.coordinatorId) ?? rooms[0], [rooms, group.coordinatorId]);
   const [bass, setBass] = useState(0);
@@ -632,11 +634,11 @@ function GroupEqModal({ group, color, onClose }: { group: SonosGroup; color: str
 
   return (
     <div className="eq-modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="eq-modal" role="dialog" aria-modal="true" aria-label={`Equalizer for ${group.coordinatorName} group`} onClick={(event) => event.stopPropagation()}>
+      <div className="eq-modal" role="dialog" aria-modal="true" aria-label={`Equalizer for ${colorName} group`} onClick={(event) => event.stopPropagation()}>
         <div className="section-heading">
           <h2 className="eq-modal-title">
             <span className="group-color-chip" style={{ background: color }} aria-hidden="true" />
-            {group.coordinatorName} EQ
+            {colorName} EQ
           </h2>
           <button type="button" className="icon-button compact" aria-label="Close" onClick={onClose}><X size={16} /></button>
         </div>
