@@ -8,6 +8,7 @@ import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { useDialogs } from "./dialogs.js";
+import { useFavorites } from "./favorites.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions } from "./groupPalette.js";
 import { LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
@@ -44,6 +45,7 @@ export function App() {
   // Volume ceiling (0–100): the sliders span 0..maxVolume, so the controller can't go louder.
   const [maxVolume, setMaxVolume] = useState<number>(() => readLocalPref(MAX_VOLUME_PREF) ?? 100);
   const dialogs = useDialogs();
+  const favorites = useFavorites();
   // Confirm a large (>30) volume jump — e.g. an accidental tap on the slider track.
   const confirmVolumeJump = useCallback(async (previous: number | undefined, next: number) => {
     if (typeof previous !== "number" || Math.abs(next - previous) <= 30) return true;
@@ -401,6 +403,22 @@ export function App() {
   const removeQueueItem = async (index: number) => {
     if (!selectedGroup) return;
     setQueue(await bridgeApi.removeQueueTrack(selectedGroup.id, index));
+  };
+
+  const queueItemFavorited = (item: QueueItem): boolean =>
+    !!(item.sourceId && item.trackId) && favorites.isFavorited(item.sourceId, item.trackId);
+
+  const toggleQueueFavorite = async (item: QueueItem) => {
+    if (!item.sourceId || !item.trackId) return;
+    try {
+      const nowFavorited = await favorites.toggle({
+        sourceId: item.sourceId, itemId: item.trackId, kind: "track",
+        title: item.title, artist: item.artist ?? null, album: item.album ?? null
+      });
+      setMessage(nowFavorited ? `Favorited “${item.title}”.` : `Removed “${item.title}” from favorites.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not update favorite");
+    }
   };
 
   const makeZoneStandalone = async (zoneId: string) => {
@@ -761,6 +779,8 @@ export function App() {
               isPlaying={nowPlaying?.state === "PLAYING"}
               onPlay={(index) => void playQueueItem(index + 1)}
               onRemove={(index) => void removeQueueItem(index)}
+              isFavorite={queueItemFavorited}
+              onFavorite={(item) => void toggleQueueFavorite(item)}
             />
           )}
         </section>
@@ -809,7 +829,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const [sources, setSources] = useState<Awaited<ReturnType<typeof bridgeApi.listSources>> | null>(null);
   const [sourceId, setSourceId] = useState<string | null>(() => readLocalPref(LAST_SOURCE_PREF));
   const sourceInitializedRef = useRef(false);
-  const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
+  const favorites = useFavorites();
   const [menu, setMenu] = useState<{ item: SourceBrowseItem; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
@@ -1041,36 +1061,21 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   }, []);
 
   // Favorites are global; load once into a Set so rows can show favorited state.
-  useEffect(() => {
-    let cancelled = false;
-    void bridgeApi.favorites()
-      .then((favs) => { if (!cancelled) setFavoriteKeys(new Set(favs.map((f) => `${f.sourceId}:${f.itemId}`))); })
-      .catch(() => { /* non-fatal */ });
-    return () => { cancelled = true; };
-  }, []);
-
-  const isFavorited = (item: SourceBrowseItem): boolean => !!sourceId && favoriteKeys.has(`${sourceId}:${item.id}`);
+  const isFavorited = (item: SourceBrowseItem): boolean => !!sourceId && favorites.isFavorited(sourceId, item.id);
 
   const toggleFavorite = useCallback(async (item: SourceBrowseItem) => {
     if (!sourceId) return;
-    const key = `${sourceId}:${item.id}`;
+    // Album rows can be containers (e.g. YouTube Music `album:…`) or kind "album".
+    const kind = item.kind === "album" || item.id.startsWith("album:") ? "album" : "track";
     try {
-      if (favoriteKeys.has(key)) {
-        await bridgeApi.removeFavorite(sourceId, item.id);
-        setFavoriteKeys((prev) => { const next = new Set(prev); next.delete(key); return next; });
-        setStatus({ ok: true, message: `Removed “${item.title}” from favorites.` });
-      } else {
-        await bridgeApi.addFavorite({
-          kind: item.kind === "album" ? "album" : "track",
-          sourceId, itemId: item.id, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album
-        });
-        setFavoriteKeys((prev) => new Set(prev).add(key));
-        setStatus({ ok: true, message: `Favorited “${item.title}”.` });
-      }
+      const nowFavorited = await favorites.toggle({
+        sourceId, itemId: item.id, kind, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album
+      });
+      setStatus({ ok: true, message: nowFavorited ? `Favorited “${item.title}”.` : `Removed “${item.title}” from favorites.` });
     } catch (err) {
       setStatus({ ok: false, message: err instanceof Error ? err.message : "Could not update favorite" });
     }
-  }, [sourceId, favoriteKeys]);
+  }, [sourceId, favorites]);
 
   const enqueueAll = useCallback(async (mode: "replace" | "next" | "end") => {
     if (!sourceId || !selectedGroupId) {
@@ -1284,6 +1289,8 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
                 // thumb row too; purely navigational folders (Home, New Episodes) stay a
                 // plain button.
                 const isFollowable = supportsPin && item.id.startsWith("show:");
+                // Album containers (e.g. YouTube Music `album:…`) can be favorited.
+                const isAlbumContainer = item.id.startsWith("album:");
                 return (
                   <li key={itemKey}>
                     {item.albumArtUri || isFollowable ? (
@@ -1303,6 +1310,18 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
                             onClick={() => void togglePin(item)}
                           >
                             <Pin size={16} fill={pinnedIds.has(item.id) ? "currentColor" : "none"} />
+                          </button>
+                        ) : null}
+                        {isAlbumContainer ? (
+                          <button
+                            type="button"
+                            className={`browse-action${isFavorited(item) ? " pinned" : ""}`}
+                            title={isFavorited(item) ? "Unfavorite album" : "Favorite album"}
+                            aria-label={isFavorited(item) ? `Unfavorite ${item.title}` : `Favorite ${item.title}`}
+                            aria-pressed={isFavorited(item)}
+                            onClick={() => void toggleFavorite(item)}
+                          >
+                            <Heart size={16} fill={isFavorited(item) ? "currentColor" : "none"} />
                           </button>
                         ) : null}
                       </div>
@@ -2397,9 +2416,11 @@ interface QueueListProps {
   isPlaying: boolean;
   onPlay: (index: number) => void;
   onRemove: (index: number) => void;
+  isFavorite: (item: QueueItem) => boolean;
+  onFavorite: (item: QueueItem) => void;
 }
 
-function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove }: QueueListProps) {
+function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, isFavorite, onFavorite }: QueueListProps) {
   const listRef = useRef<HTMLOListElement | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
 
@@ -2445,6 +2466,18 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove }: QueueLis
                 <small>{[item.artist, item.album].filter(Boolean).join(" - ")}</small>
               </span>
             </button>
+            {item.sourceId && item.trackId ? (
+              <button
+                type="button"
+                className={`queue-action${isFavorite(item) ? " on" : ""}`}
+                title={isFavorite(item) ? "Unfavorite" : "Favorite"}
+                aria-label={isFavorite(item) ? `Unfavorite ${item.title}` : `Favorite ${item.title}`}
+                aria-pressed={isFavorite(item)}
+                onClick={() => onFavorite(item)}
+              >
+                <Heart size={15} fill={isFavorite(item) ? "currentColor" : "none"} />
+              </button>
+            ) : null}
             <button type="button" className="queue-remove" title="Remove from queue" aria-label={`Remove ${item.title} from queue`} onClick={() => onRemove(index)}>
               <X size={16} />
             </button>

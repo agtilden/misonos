@@ -301,12 +301,15 @@ export class SonosService {
       // Cache-only enrichment (no per-item source fetches in a polling path).
       return items.map((item) => {
         const meta = this.smapiTrackFromCache(item.uri);
+        const ref = this.queueUriToRef(item.uri);
         return {
           ...item,
           title: meta?.title ?? cleanTrackTitle(item.title),
           artist: meta?.artist ?? item.artist,
           album: meta?.album ?? item.album,
-          albumArtUri: proxyArtUri(meta?.albumArtUri ?? item.albumArtUri)
+          albumArtUri: proxyArtUri(meta?.albumArtUri ?? item.albumArtUri),
+          sourceId: ref?.sourceId,
+          trackId: ref?.trackId
         };
       });
     });
