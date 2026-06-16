@@ -104,6 +104,11 @@ export interface BrowseItem {
 }
 
 export function archiveThumbUrl(itemId: string): string {
+  // The item's own thumbnail file, served directly. We deliberately avoid
+  // services/img/<id>, which more readily falls back to archive.org's generic
+  // placeholder (so distinct recordings collapse to one identical tile). For
+  // these GD items the tile is an audio waveform — there's no real cover art —
+  // so this only weakly distinguishes recordings; the source label does that.
   return `https://archive.org/download/${encodeURIComponent(itemId)}/__ia_thumb.jpg`;
 }
 
