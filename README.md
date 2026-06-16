@@ -1,4 +1,4 @@
-# <img src="docs/rebus/misonos-ux11.svg" height="40" align="middle" alt=""> MiSonos UX11
+# <img src="docs/rebus/misonos-mark.svg" height="50" align="middle" alt=""> MiSonos UX11
 
 Modern TypeScript Sonos controller targeting fast LAN control.
 

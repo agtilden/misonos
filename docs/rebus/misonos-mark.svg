@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="624" viewBox="0 0 512 624" role="img">
+  <!-- Title lockup variant: the mark sits at the top with bottom padding so that,
+       rendered inline with align="middle", its visible center lines up with the
+       optical center of the wordmark. The equation uses misonos-ux11.svg (no padding). -->
+  <rect width="512" height="512" rx="84" fill="#141716"/>
+  <g fill="#91d3c4">
+    <rect x="170" y="176" width="44" height="160" rx="22"/>
+    <rect x="234" y="136" width="44" height="240" rx="22"/>
+    <rect x="298" y="200" width="44" height="112" rx="22"/>
+  </g>
+</svg>
