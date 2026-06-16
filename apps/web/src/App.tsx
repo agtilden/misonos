@@ -326,6 +326,7 @@ export function App() {
   }, []);
 
   const pauseAllGroups = useCallback(async () => {
+    localPlayer.pause(); // "all zones" includes the in-browser device
     const targets = groups.filter((group) => groupPlayback[group.id] === "PLAYING");
     await Promise.all(targets.map((group) =>
       bridgeApi.transport(group.id, "pause")
@@ -333,7 +334,7 @@ export function App() {
         .catch(() => null)
     ));
     setNowPlaying((current) => (current && current.state === "PLAYING" ? { ...current, state: "PAUSED_PLAYBACK" } : current));
-  }, [groups, groupPlayback]);
+  }, [groups, groupPlayback, localPlayer]);
 
   const runSeek = async (positionSeconds: number) => {
     if (!selectedGroup) return;

@@ -30,6 +30,7 @@ interface LocalPlayerApi {
   muted: boolean;
   enqueue: (tracks: LocalTrack[], mode: "replace" | "next" | "end") => void;
   toggle: () => void;
+  pause: () => void;
   next: () => void;
   prev: () => void;
   seek: (seconds: number) => void;
@@ -107,6 +108,8 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     if (audio.paused) void audio.play().catch(() => undefined);
     else audio.pause();
   }, [current]);
+
+  const pause = useCallback(() => { audioRef.current?.pause(); }, []);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -191,9 +194,9 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   const api = useMemo<LocalPlayerApi>(() => ({
     active: queue.length > 0,
     playing, nowPlaying, queue: queueItems, activeIndex: index, position, duration, volume, muted,
-    enqueue, toggle, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop
+    enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop
   }), [queue.length, playing, nowPlaying, queueItems, index, position, duration, volume, muted,
-      enqueue, toggle, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop]);
+      enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop]);
 
   return (
     <LocalPlayerContext.Provider value={api}>
