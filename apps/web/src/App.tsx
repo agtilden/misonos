@@ -398,6 +398,11 @@ export function App() {
     void loadNowPlaying(selectedGroup.id);
   };
 
+  const removeQueueItem = async (index: number) => {
+    if (!selectedGroup) return;
+    setQueue(await bridgeApi.removeQueueTrack(selectedGroup.id, index));
+  };
+
   const makeZoneStandalone = async (zoneId: string) => {
     enqueueGroupEdit({ id: randomEditId(), type: "standalone", zoneId });
   };
@@ -755,6 +760,7 @@ export function App() {
               activeIndex={activeQueueIndex}
               isPlaying={nowPlaying?.state === "PLAYING"}
               onPlay={(index) => void playQueueItem(index + 1)}
+              onRemove={(index) => void removeQueueItem(index)}
             />
           )}
         </section>
@@ -2390,9 +2396,10 @@ interface QueueListProps {
   activeIndex: number;
   isPlaying: boolean;
   onPlay: (index: number) => void;
+  onRemove: (index: number) => void;
 }
 
-function QueueList({ queue, activeIndex, isPlaying, onPlay }: QueueListProps) {
+function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove }: QueueListProps) {
   const listRef = useRef<HTMLOListElement | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
 
@@ -2428,14 +2435,18 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay }: QueueListProps) {
             ref={isActive ? activeItemRef : undefined}
             className={isActive ? "queue-item active" : "queue-item"}
           >
-            <button type="button" onClick={() => onPlay(index)} aria-current={isActive ? "true" : undefined}>
+            <button type="button" className="queue-item-main" onClick={() => onPlay(index)} aria-current={isActive ? "true" : undefined}>
               <span className="queue-indicator" aria-hidden="true">
                 {isActive ? <AudioLines size={16} className={isPlaying ? "queue-indicator-active playing" : "queue-indicator-active"} /> : <span className="queue-track-number">{index + 1}</span>}
               </span>
+              <BrowseThumb src={item.albumArtUri} />
               <span className="queue-meta">
                 <span>{item.title}</span>
                 <small>{[item.artist, item.album].filter(Boolean).join(" - ")}</small>
               </span>
+            </button>
+            <button type="button" className="queue-remove" title="Remove from queue" aria-label={`Remove ${item.title} from queue`} onClick={() => onRemove(index)}>
+              <X size={16} />
             </button>
           </li>
         );

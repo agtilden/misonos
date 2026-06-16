@@ -1450,16 +1450,7 @@ h2 {
 }
 
 .group-row,
-.queue-list button {
-  width: 100%;
-  border: 1px solid rgba(242, 240, 232, 0.1);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  color: inherit;
-}
-
-.group-row,
-.queue-list button {
+.group-row {
   display: grid;
   gap: 4px;
   padding: 12px;
@@ -1467,10 +1458,50 @@ h2 {
   cursor: pointer;
 }
 
-.queue-list button {
-  grid-template-columns: 28px minmax(0, 1fr);
+.queue-item {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.queue-item-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 28px 42px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(242, 240, 232, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.queue-item .browse-thumb {
+  width: 42px;
+  height: 42px;
+}
+
+.queue-remove {
+  flex: 0 0 auto;
+  width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(242, 240, 232, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #aeb4ad;
+  cursor: pointer;
+}
+
+.queue-remove:hover {
+  color: #ff8a80;
+  border-color: rgba(255, 138, 128, 0.5);
+  background: rgba(255, 138, 128, 0.12);
 }
 
 .queue-indicator {
@@ -1500,7 +1531,7 @@ h2 {
   white-space: nowrap;
 }
 
-.queue-item.active button {
+.queue-item.active .queue-item-main {
   border-color: rgba(145, 211, 196, 0.7);
   background: rgba(145, 211, 196, 0.12);
 }
