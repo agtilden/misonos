@@ -14,11 +14,7 @@ Modern TypeScript Sonos controller targeting fast LAN control.
   </tr>
 </table>
 
-**Misono UX10** is the chef's knife from the Japanese maker *Misono* — that gets
-us *Mi&hairsp;sono* and *UX10*. And *UX* is also **U**ser **E**xperience, the
-thing Sonos famously fumbled in its app redesign. Then, like the amp in *This Is
-Spinal Tap* — *"if we need that extra push over the cliff, you know what we do?"*
-— ours **goes to 11**. So UX10 + 11 = **MiSonos UX11**.
+<p align="center"><em>"If we need that extra push over the cliff, you know what we do?"</em></p>
 
 ## Screenshots
 
