@@ -1,13 +1,13 @@
-# <img src="docs/rebus/misonos-ux11.svg" height="36" alt=""> MiSonos UX11
+# <img src="docs/rebus/misonos-ux11.svg" height="40" align="middle" alt=""> MiSonos UX11
 
 Modern TypeScript Sonos controller targeting fast LAN control.
 
 <p align="center">
-  <img src="docs/screenshots/HMI-UXGY-300.01.jpg" height="150" alt="Misono UX10 chef's knife">
-  &nbsp;&nbsp;<b>+</b>&nbsp;&nbsp;
-  <img src="docs/screenshots/Goes-to-11.jpg" height="150" alt="An amplifier that goes to 11">
-  &nbsp;&nbsp;<b>=</b>&nbsp;&nbsp;
-  <img src="docs/rebus/misonos-ux11.svg" height="150" alt="MiSonos UX11">
+  <img src="docs/screenshots/HMI-UXGY-300.01.jpg" height="150" align="middle" alt="Misono UX10 chef's knife">
+  &nbsp;&nbsp;<img src="docs/rebus/plus.svg" height="48" align="middle" alt="plus">&nbsp;&nbsp;
+  <img src="docs/screenshots/Goes-to-11.jpg" height="150" align="middle" alt="An amplifier that goes to 11">
+  &nbsp;&nbsp;<img src="docs/rebus/equals.svg" height="48" align="middle" alt="equals">&nbsp;&nbsp;
+  <img src="docs/rebus/misonos-ux11.svg" height="150" align="middle" alt="MiSonos UX11">
 </p>
 
 <p align="center"><em>"If we need that extra push over the cliff, you know what we do?"</em></p>
