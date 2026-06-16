@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AudioLines, ChevronDown, Pause, Play } from "lucide-react";
+import { AudioLines, ChevronDown, Pause, Play, Smartphone } from "lucide-react";
 import { IconCategoryPlus } from "@tabler/icons-react";
 import type { PlaybackState } from "@misonos/sonos-protocol";
 import { hexToRgba, type GroupOption } from "./groupPalette.js";
@@ -47,14 +47,16 @@ export function GroupDropdown({ options, selectedId, selectedOption, onSelect, o
       <button
         type="button"
         className="topbar-group-trigger"
-        style={selectedOption ? { background: hexToRgba(selectedOption.color, 0.18), borderColor: hexToRgba(selectedOption.color, 0.55) } : undefined}
+        style={selectedOption && !selectedOption.device ? { background: hexToRgba(selectedOption.color, 0.18), borderColor: hexToRgba(selectedOption.color, 0.55) } : undefined}
         onClick={toggleOpen}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
         {selectedOption ? (
           <>
-            <span className="group-color-chip" style={{ background: selectedOption.color }} aria-hidden="true" />
+            {selectedOption.device
+              ? <Smartphone size={15} className="group-device-icon" aria-hidden="true" />
+              : <span className="group-color-chip" style={{ background: selectedOption.color }} aria-hidden="true" />}
             {selectedId && playback[selectedId] === "PLAYING" ? (
               <AudioLines size={15} className="group-playing-indicator playing" aria-label="Playing" />
             ) : null}
@@ -79,10 +81,12 @@ export function GroupDropdown({ options, selectedId, selectedOption, onSelect, o
                   role="option"
                   aria-selected={option.id === selectedId}
                   className={option.id === selectedId ? "selected" : undefined}
-                  style={{ background: hexToRgba(option.color, 0.18), borderColor: hexToRgba(option.color, 0.55) }}
+                  style={option.device ? undefined : { background: hexToRgba(option.color, 0.18), borderColor: hexToRgba(option.color, 0.55) }}
                   onClick={() => { onSelect(option.id); setOpen(false); }}
                 >
-                  <span className="group-color-chip" style={{ background: option.color }} aria-hidden="true" />
+                  {option.device
+                    ? <Smartphone size={15} className="group-device-icon" aria-hidden="true" />
+                    : <span className="group-color-chip" style={{ background: option.color }} aria-hidden="true" />}
                   {playing ? <AudioLines size={15} className="group-playing-indicator playing" aria-label="Playing" /> : null}
                   <span className="topbar-group-label">
                     <strong>{option.name}</strong>

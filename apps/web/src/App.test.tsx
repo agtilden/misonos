@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 import { DialogProvider } from "./dialogs.js";
 import { FavoritesProvider } from "./favorites.js";
+import { LocalPlayerProvider } from "./localPlayer.js";
 
 class FakeEventSource {
   onerror: (() => void) | null = null;
@@ -35,7 +36,7 @@ describe("App", () => {
   });
 
   it("renders the controller shell", async () => {
-    render(<DialogProvider><FavoritesProvider><App /></FavoritesProvider></DialogProvider>);
+    render(<DialogProvider><FavoritesProvider><LocalPlayerProvider><App /></LocalPlayerProvider></FavoritesProvider></DialogProvider>);
     expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
     expect(await screen.findByText(/^(Mint|Amber|Sky|Coral|Lilac|Lime|Pink|Olive)$/)).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Song" })).toBeInTheDocument();

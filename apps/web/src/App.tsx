@@ -9,8 +9,9 @@ import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { useDialogs } from "./dialogs.js";
 import { useFavorites } from "./favorites.js";
+import { useLocalPlayer, type LocalTrack } from "./localPlayer.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
-import { buildGroupOptions } from "./groupPalette.js";
+import { buildGroupOptions, type GroupOption } from "./groupPalette.js";
 import { LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
 const GroupEditor = lazy(() => import("./GroupEditor.js").then((module) => ({ default: module.GroupEditor })));
@@ -21,6 +22,20 @@ type QueueState = "idle" | "loading" | "ready" | "error";
 type PendingGroupEdit =
   | { id: string; type: "join"; zoneId: string; groupId: string }
   | { id: string; type: "standalone"; zoneId: string };
+
+const LOCAL_DEVICE_ID = "local-device";
+const DEVICE_OPTION: GroupOption = { id: LOCAL_DEVICE_ID, key: LOCAL_DEVICE_ID, name: "This device", color: "", zoneList: "Plays in this browser", device: true };
+
+// Progress shape (matching playbackProgressFromNowPlaying) for the local player.
+function localPlaybackProgress(position: number, duration: number) {
+  const percent = duration > 0 ? Math.max(0, Math.min(100, (position / duration) * 100)) : 0;
+  return {
+    percent,
+    positionLabel: formatDuration(position),
+    durationLabel: duration > 0 ? formatDuration(duration) : "0:00",
+    durationSeconds: duration
+  };
+}
 
 export function App() {
   const [groups, setGroups] = useState<SonosGroup[]>([]);
@@ -46,6 +61,10 @@ export function App() {
   const [maxVolume, setMaxVolume] = useState<number>(() => readLocalPref(MAX_VOLUME_PREF) ?? 100);
   const dialogs = useDialogs();
   const favorites = useFavorites();
+  const localPlayer = useLocalPlayer();
+  // "This device" is a synthetic Play-to target: when selected, playback/now-playing/
+  // queue/volume route to the in-browser player instead of a Sonos group.
+  const localMode = selectedGroupId === LOCAL_DEVICE_ID;
   // Confirm a large (>30) volume jump — e.g. an accidental tap on the slider track.
   const confirmVolumeJump = useCallback(async (previous: number | undefined, next: number) => {
     if (typeof previous !== "number" || Math.abs(next - previous) <= 30) return true;
@@ -77,8 +96,8 @@ export function App() {
   }, [groups, pendingGroupEdits]);
 
   const selectedGroup = useMemo(
-    () => groups.find((group) => group.id === selectedGroupId) ?? groups[0],
-    [groups, selectedGroupId]
+    () => (localMode ? undefined : groups.find((group) => group.id === selectedGroupId) ?? groups[0]),
+    [groups, selectedGroupId, localMode]
   );
 
   const selectedVisibleZones = useMemo(
@@ -120,6 +139,25 @@ export function App() {
         (item.album ?? "") === (nowPlaying.album ?? "")
     );
   }, [nowPlaying, queue]);
+
+  // In device mode the now-playing/queue/transport/volume bind to the local player;
+  // otherwise to the selected Sonos group. `transportEnabled` gates the controls.
+  const transportEnabled = localMode ? localPlayer.active : !!selectedGroup;
+  const effectiveNowPlaying = localMode ? localPlayer.nowPlaying : nowPlaying;
+  const effectivePlaying = localMode ? localPlayer.playing : nowPlaying?.state === "PLAYING";
+  const effectiveProgress = localMode ? localPlaybackProgress(localPlayer.position, localPlayer.duration) : playbackProgress;
+  const effectiveQueue = localMode ? localPlayer.queue : queue;
+  const effectiveActiveIndex = localMode ? localPlayer.activeIndex : activeQueueIndex;
+  const effectiveVolumeValue = localMode ? localPlayer.volume : (primaryVolume?.volume ?? 0);
+  const effectiveMuted = localMode ? localPlayer.muted : (primaryVolume?.muted ?? false);
+  const onPlayPause = () => { if (localMode) localPlayer.toggle(); else void runTransport(effectivePlaying ? "pause" : "play"); };
+  const onPrevTrack = () => { if (localMode) localPlayer.prev(); else void runTransport("previous"); };
+  const onNextTrack = () => { if (localMode) localPlayer.next(); else void runTransport("next"); };
+  const onSeekTo = (seconds: number) => { if (localMode) localPlayer.seek(seconds); else void runSeek(seconds); };
+  const onPrimaryVolume = (volume: number) => { if (localMode) localPlayer.setVolume(volume); else void setPrimaryVolume(volume); };
+  const onPrimaryMute = () => { if (localMode) localPlayer.toggleMute(); else void togglePrimaryMute(); };
+  const onQueuePlay = (index: number) => { if (localMode) localPlayer.playIndex(index); else void playQueueItem(index + 1); };
+  const onQueueRemove = (index: number) => { if (localMode) localPlayer.removeIndex(index); else void removeQueueItem(index); };
 
   const applySnapshot = useCallback((snapshot: BridgeSnapshot) => {
     setGroups((current) => (groupsTopologyKey(current) === groupsTopologyKey(snapshot.groups) ? current : snapshot.groups));
@@ -214,9 +252,10 @@ export function App() {
   useEffect(() => {
     if (!selectedGroupId) return;
     setVolumePopoverOpen(false);
+    if (localMode) return; // device target loads no Sonos now-playing/queue
     void loadNowPlaying(selectedGroupId);
     void loadQueue(selectedGroupId);
-  }, [loadNowPlaying, loadQueue, selectedGroupId]);
+  }, [loadNowPlaying, loadQueue, selectedGroupId, localMode]);
 
   useEffect(() => {
     if (!selectedGroup) return;
@@ -473,8 +512,9 @@ export function App() {
     enqueueGroupEdit({ id: randomEditId(), type: "join", zoneId, groupId });
   };
 
-  const groupOptions = buildGroupOptions(displayGroups);
-  const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroup?.id) ?? groupOptions[0];
+  const groupOptions = [...buildGroupOptions(displayGroups), DEVICE_OPTION];
+  const selectedGroupOption = groupOptions.find((option) => option.id === (selectedGroupId || selectedGroup?.id)) ?? groupOptions[0];
+  const targetPlayback = { ...groupPlayback, [LOCAL_DEVICE_ID]: (localPlayer.playing ? "PLAYING" : "PAUSED_PLAYBACK") as PlaybackState };
   const primaryVolumeLabel = selectedGroup && selectedVisibleZones.length > 1
     ? `${selectedGroupOption?.name ?? "Group"} group`
     : selectedPrimaryZone?.name ?? "Selected room";
@@ -486,12 +526,12 @@ export function App() {
           <>
             <GroupDropdown
               options={groupOptions}
-              selectedId={selectedGroup?.id}
+              selectedId={selectedGroupId || selectedGroup?.id}
               selectedOption={selectedGroupOption}
               onSelect={setSelectedGroupId}
               onEditGroups={() => setView("editor")}
-              playback={groupPlayback}
-              onTogglePlay={(groupId, playing) => void toggleGroupPlayback(groupId, playing ? "pause" : "play")}
+              playback={targetPlayback}
+              onTogglePlay={(groupId, playing) => { if (groupId === LOCAL_DEVICE_ID) localPlayer.toggle(); else void toggleGroupPlayback(groupId, playing ? "pause" : "play"); }}
               onPauseAll={() => void pauseAllGroups()}
               onOpen={() => { if (groups.length > 0) void loadGroupPlayback(groups); }}
             />
@@ -616,14 +656,14 @@ export function App() {
             aria-label="Expand album art"
             onClick={() => setArtworkFullscreen(true)}
           >
-            {nowPlaying?.albumArtUri ? <img src={nowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
+            {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
           </button>
           <div className="track-copy">
-            <p className="eyebrow">{nowPlaying?.state ?? "UNKNOWN"}</p>
-            <h2>{nowPlaying?.title ?? "Nothing selected"}</h2>
-            <p>{[nowPlaying?.artist, nowPlaying?.album].filter(Boolean).join(" - ")}</p>
+            <p className="eyebrow">{localMode ? "ON THIS DEVICE" : effectiveNowPlaying?.state ?? "UNKNOWN"}</p>
+            <h2>{effectiveNowPlaying?.title ?? "Nothing selected"}</h2>
+            <p>{[effectiveNowPlaying?.artist, effectiveNowPlaying?.album].filter(Boolean).join(" - ")}</p>
             <div className="progress-copy">
-              <span>{playbackProgress.positionLabel}</span>
+              <span>{effectiveProgress.positionLabel}</span>
               <button
                 type="button"
                 className="playback-progress"
@@ -631,43 +671,39 @@ export function App() {
                 aria-label="Playback progress (click to seek)"
                 aria-valuemin={0}
                 aria-valuemax={100}
-                aria-valuenow={Math.round(playbackProgress.percent)}
-                disabled={!selectedGroup || !playbackProgress.durationSeconds}
+                aria-valuenow={Math.round(effectiveProgress.percent)}
+                disabled={!transportEnabled || !effectiveProgress.durationSeconds}
                 onClick={(event) => {
-                  if (!playbackProgress.durationSeconds) return;
+                  if (!effectiveProgress.durationSeconds) return;
                   const target = event.currentTarget.getBoundingClientRect();
                   const ratio = Math.max(0, Math.min(1, (event.clientX - target.left) / target.width));
-                  void runSeek(Math.round(ratio * playbackProgress.durationSeconds));
+                  onSeekTo(Math.round(ratio * effectiveProgress.durationSeconds));
                 }}
               >
-                <span style={{ width: `${playbackProgress.percent}%` }} />
+                <span style={{ width: `${effectiveProgress.percent}%` }} />
               </button>
-              <span>{playbackProgress.durationLabel}</span>
+              <span>{effectiveProgress.durationLabel}</span>
             </div>
           </div>
           <div className="transport-bar">
-            <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!selectedGroup} onClick={() => void runTransport("previous")}>
+            <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!transportEnabled} onClick={onPrevTrack}>
               <SkipBack size={22} />
             </button>
-            {(() => {
-              const playing = nowPlaying?.state === "PLAYING";
-              return (
-                <button
-                  className="icon-button large primary"
-                  type="button"
-                  title={playing ? "Pause" : "Play"}
-                  aria-label={playing ? "Pause" : "Play"}
-                  disabled={!selectedGroup}
-                  onClick={() => void runTransport(playing ? "pause" : "play")}
-                >
-                  {playing ? <Pause size={22} /> : <Play size={24} />}
-                </button>
-              );
-            })()}
-            <button className="icon-button large" type="button" title="Next" aria-label="Next" disabled={!selectedGroup} onClick={() => void runTransport("next")}>
+            <button
+              className="icon-button large primary"
+              type="button"
+              title={effectivePlaying ? "Pause" : "Play"}
+              aria-label={effectivePlaying ? "Pause" : "Play"}
+              disabled={!transportEnabled}
+              onClick={onPlayPause}
+            >
+              {effectivePlaying ? <Pause size={22} /> : <Play size={24} />}
+            </button>
+            <button className="icon-button large" type="button" title="Next" aria-label="Next" disabled={!transportEnabled} onClick={onNextTrack}>
               <SkipForward size={22} />
             </button>
           </div>
+          {!localMode ? (
           <div className="transport-modes">
             <button
               className={`icon-button mode${nowPlaying?.repeat && nowPlaying.repeat !== "none" ? " active" : ""}`}
@@ -705,21 +741,22 @@ export function App() {
               onSet={(seconds) => void setSleep(seconds)}
             />
           </div>
+          ) : null}
           <div className="playback-volume">
             <VolumeControl
-              label={primaryVolumeLabel}
-              value={primaryVolume?.volume ?? 0}
-              muted={primaryVolume?.muted ?? false}
+              label={localMode ? "This device" : primaryVolumeLabel}
+              value={effectiveVolumeValue}
+              muted={effectiveMuted}
               maxVolume={maxVolume}
-              disabled={!primaryVolume}
-              onChange={setPrimaryVolume}
-              onMute={togglePrimaryMute}
-              swallowFirstAdjustment={selectedVisibleZones.length > 1 && !volumePopoverOpen}
+              disabled={localMode ? !localPlayer.active : !primaryVolume}
+              onChange={onPrimaryVolume}
+              onMute={onPrimaryMute}
+              swallowFirstAdjustment={!localMode && selectedVisibleZones.length > 1 && !volumePopoverOpen}
               onSliderPointerDown={() => {
-                if (selectedVisibleZones.length > 1) setVolumePopoverOpen(true);
+                if (!localMode && selectedVisibleZones.length > 1) setVolumePopoverOpen(true);
               }}
             />
-            {selectedGroup && selectedVisibleZones.length > 1 && volumePopoverOpen ? (
+            {!localMode && selectedGroup && selectedVisibleZones.length > 1 && volumePopoverOpen ? (
               <div className="volume-popover" role="dialog" aria-label="Room volumes">
                 <div className="volume-popover-heading">
                   <strong>Room Volume</strong>
@@ -755,30 +792,30 @@ export function App() {
                 type="button"
                 title="Save queue as playlist"
                 aria-label="Save queue as playlist"
-                disabled={queue.length === 0 || !selectedGroup}
+                disabled={effectiveQueue.length === 0 || localMode || !selectedGroup}
                 onClick={() => void saveQueueAsPlaylist()}
               >
                 <Plus size={16} />
               </button>
-              <span>{queue.length}</span>
+              <span>{effectiveQueue.length}</span>
             </div>
           </div>
-          {queueState === "loading" ? (
+          {!localMode && queueState === "loading" ? (
             <div className="empty-panel">Loading queue...</div>
-          ) : queueState === "error" ? (
+          ) : !localMode && queueState === "error" ? (
             <div className="empty-panel error-panel">
               <span>{queueError}</span>
               <button type="button" onClick={() => selectedGroup && void loadQueue(selectedGroup.id)}>Retry</button>
             </div>
-          ) : queue.length === 0 ? (
-            <div className="empty-panel">No queue items for this group.</div>
+          ) : effectiveQueue.length === 0 ? (
+            <div className="empty-panel">{localMode ? "Nothing playing on this device yet." : "No queue items for this group."}</div>
           ) : (
             <QueueList
-              queue={queue}
-              activeIndex={activeQueueIndex}
-              isPlaying={nowPlaying?.state === "PLAYING"}
-              onPlay={(index) => void playQueueItem(index + 1)}
-              onRemove={(index) => void removeQueueItem(index)}
+              queue={effectiveQueue}
+              activeIndex={effectiveActiveIndex}
+              isPlaying={effectivePlaying}
+              onPlay={(index) => onQueuePlay(index)}
+              onRemove={(index) => onQueueRemove(index)}
               isFavorite={queueItemFavorited}
               onFavorite={(item) => void toggleQueueFavorite(item)}
             />
@@ -830,6 +867,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const [sourceId, setSourceId] = useState<string | null>(() => readLocalPref(LAST_SOURCE_PREF));
   const sourceInitializedRef = useRef(false);
   const favorites = useFavorites();
+  const localPlayer = useLocalPlayer();
   const [menu, setMenu] = useState<{ item: SourceBrowseItem; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
@@ -968,7 +1006,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
     }
   }, [sourceId, pinnedIds]);
 
-  const browseGroupOptions = useMemo(() => buildGroupOptions(groups), [groups]);
+  const browseGroupOptions = useMemo(() => [...buildGroupOptions(groups), DEVICE_OPTION], [groups]);
 
   const runSearch = useCallback(async (overrideType?: "song" | "artist" | "album") => {
     if (!sourceId || !searchQuery.trim()) return;
@@ -1077,40 +1115,65 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
     }
   }, [sourceId, favorites]);
 
+  // Expand a browse item to playable LocalTracks (single track, or an album/container's
+  // children) for the "This device" target.
+  const buildLocalTracks = useCallback(async (item: SourceBrowseItem): Promise<LocalTrack[]> => {
+    if (!sourceId) return [];
+    if (item.kind === "playable") {
+      return [{ sourceId, trackId: item.id, title: item.title, artist: item.artist, album: item.album, albumArtUri: item.albumArtUri }];
+    }
+    const expansion = await bridgeApi.browseSource(sourceId, item.id);
+    return expansion.items
+      .filter((entry) => entry.kind === "playable")
+      .map((entry) => ({ sourceId, trackId: entry.id, title: entry.title, artist: entry.artist, album: entry.album, albumArtUri: entry.albumArtUri }));
+  }, [sourceId]);
+
+  const verbFor = (mode: "replace" | "next" | "end") => mode === "replace" ? "Playing" : mode === "next" ? "Queued next:" : "Queued at end:";
+
   const enqueueAll = useCallback(async (mode: "replace" | "next" | "end") => {
     if (!sourceId || !selectedGroupId) {
-      setStatus({ ok: false, message: "Pick a group first." });
-      return;
-    }
-    const allTrackIds = (data?.items ?? [])
-      .filter((entry) => entry.kind === "playable")
-      .map((entry) => entry.id)
-      .slice(0, 100);
-    if (allTrackIds.length === 0) {
-      setStatus({ ok: false, message: "No playable tracks in this view." });
+      setStatus({ ok: false, message: "Pick a target first." });
       return;
     }
     setPlaying(`all:${mode}`);
     setStatus(null);
     try {
+      if (selectedGroupId === LOCAL_DEVICE_ID) {
+        const tracks: LocalTrack[] = (data?.items ?? [])
+          .filter((entry) => entry.kind === "playable").slice(0, 100)
+          .map((entry) => ({ sourceId, trackId: entry.id, title: entry.title, artist: entry.artist, album: entry.album, albumArtUri: entry.albumArtUri }));
+        if (tracks.length === 0) { setStatus({ ok: false, message: "No playable tracks in this view." }); return; }
+        localPlayer.enqueue(tracks, mode);
+        setStatus({ ok: true, message: `${verbFor(mode)} ${tracks.length} tracks on this device.` });
+        return;
+      }
+      const allTrackIds = (data?.items ?? []).filter((entry) => entry.kind === "playable").map((entry) => entry.id).slice(0, 100);
+      if (allTrackIds.length === 0) { setStatus({ ok: false, message: "No playable tracks in this view." }); return; }
       await bridgeApi.playSourceItems(sourceId, { trackIds: allTrackIds, groupId: selectedGroupId, mode });
-      const verb = mode === "replace" ? "Playing" : mode === "next" ? "Queued next:" : "Queued at end:";
-      setStatus({ ok: true, message: `${verb} ${allTrackIds.length} tracks.` });
+      setStatus({ ok: true, message: `${verbFor(mode)} ${allTrackIds.length} tracks.` });
     } catch (err) {
       setStatus({ ok: false, message: err instanceof Error ? err.message : "Action failed" });
     } finally {
       setPlaying(null);
     }
-  }, [sourceId, selectedGroupId, data]);
+  }, [sourceId, selectedGroupId, data, localPlayer]);
 
-  const enqueueItem = useCallback(async (item: { id: string; title: string; kind: "container" | "album" | "playable" | "section" }, mode: "replace" | "next" | "end") => {
+  const enqueueItem = useCallback(async (item: SourceBrowseItem, mode: "replace" | "next" | "end") => {
     if (!sourceId || !selectedGroupId) {
-      setStatus({ ok: false, message: "Pick a group first." });
+      setStatus({ ok: false, message: "Pick a target first." });
       return;
     }
     setPlaying(`${item.id}:${mode}`);
     setStatus(null);
     try {
+      if (selectedGroupId === LOCAL_DEVICE_ID) {
+        const tracks = await buildLocalTracks(item);
+        if (tracks.length === 0) { setStatus({ ok: false, message: `“${item.title}” has no playable tracks.` }); return; }
+        localPlayer.enqueue(tracks, mode);
+        const label = tracks.length === 1 ? `“${item.title}”` : `${tracks.length} tracks from “${item.title}”`;
+        setStatus({ ok: true, message: `${verbFor(mode)} ${label} on this device.` });
+        return;
+      }
       let trackIds: string[];
       if (item.kind === "playable") {
         trackIds = [item.id];
@@ -1124,14 +1187,13 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
       }
       await bridgeApi.playSourceItems(sourceId, { trackIds, groupId: selectedGroupId, mode });
       const label = trackIds.length === 1 ? `“${item.title}”` : `${trackIds.length} tracks from “${item.title}”`;
-      const verb = mode === "replace" ? "Playing" : mode === "next" ? "Queued next:" : "Queued at end:";
-      setStatus({ ok: true, message: `${verb} ${label}.` });
+      setStatus({ ok: true, message: `${verbFor(mode)} ${label}.` });
     } catch (err) {
       setStatus({ ok: false, message: err instanceof Error ? err.message : "Action failed" });
     } finally {
       setPlaying(null);
     }
-  }, [sourceId, selectedGroupId]);
+  }, [sourceId, selectedGroupId, buildLocalTracks, localPlayer]);
 
   if (sources && sources.length === 0) {
     return (
