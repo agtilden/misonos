@@ -1,18 +1,14 @@
-# MiSonos UX11
+# <img src="docs/rebus/misonos-ux11.svg" height="36" alt=""> MiSonos UX11
 
 Modern TypeScript Sonos controller targeting fast LAN control.
 
-## Where the name comes from
-
-<table align="center">
-  <tr align="center">
-    <td><img src="docs/screenshots/HMI-UXGY-300.01.jpg" height="150" alt="Misono UX10 chef's knife"></td>
-    <td><b>+</b></td>
-    <td><img src="docs/screenshots/Goes-to-11.jpg" height="150" alt="An amplifier that goes to 11"></td>
-    <td><b>=</b></td>
-    <td><img src="docs/rebus/misonos-ux11.svg" height="150" alt="MiSonos UX11"></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/screenshots/HMI-UXGY-300.01.jpg" height="150" alt="Misono UX10 chef's knife">
+  &nbsp;&nbsp;<b>+</b>&nbsp;&nbsp;
+  <img src="docs/screenshots/Goes-to-11.jpg" height="150" alt="An amplifier that goes to 11">
+  &nbsp;&nbsp;<b>=</b>&nbsp;&nbsp;
+  <img src="docs/rebus/misonos-ux11.svg" height="150" alt="MiSonos UX11">
+</p>
 
 <p align="center"><em>"If we need that extra push over the cliff, you know what we do?"</em></p>
 
