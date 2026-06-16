@@ -7,8 +7,15 @@ Two ways to run it:
 - **Option B — macOS app bundle** (`MiSonos.app` via `install.sh`) — required on
   macOS, where Local Network access is gated behind a per-app permission.
 
-Both need the Grateful Dead SQLite DB (`gratefuldead.db`, ~71 MB) — it lives
-outside this repo and must be copied to the host.
+Both need the Grateful Dead SQLite DB (`gratefuldead.db`, ~71 MB). It lives
+outside this repo, in [`agtilden/grateful-dead-db`](https://github.com/agtilden/grateful-dead-db),
+which packages it as rebuildable raw SQL. Build it once and copy the result to
+the host:
+
+```sh
+git clone https://github.com/agtilden/grateful-dead-db
+cd grateful-dead-db && ./build.sh   # writes ./gratefuldead.db
+```
 
 ---
 
@@ -31,9 +38,9 @@ cp .env.example .env
 # edit .env: set MISONOS_LAN_IP to this host's LAN IP (e.g. 192.168.68.50),
 # NOT its Tailscale 100.x address.
 
-# 2. Drop the Grateful Dead DB in place:
+# 2. Drop the Grateful Dead DB in place (build it from grateful-dead-db first):
 mkdir -p data
-cp /path/to/gratefuldead.db data/gratefuldead.db
+cp /path/to/grateful-dead-db/gratefuldead.db data/gratefuldead.db
 
 # 3. Build and start:
 docker compose up -d --build
@@ -78,8 +85,9 @@ declares `NSLocalNetworkUsageDescription`. `deploy/macos/install.sh` builds it.
 git clone https://github.com/agtilden/misonos.git
 cd misonos
 
-# 2. Drop the Grateful Dead DB in place (or set MISONOS_GRATEFUL_DB):
-cp /path/to/gratefuldead.db ~/Documents/projects/grateful/gratefuldead.db
+# 2. Drop the Grateful Dead DB in place (build it from grateful-dead-db first;
+#    or set MISONOS_GRATEFUL_DB):
+cp /path/to/grateful-dead-db/gratefuldead.db ~/Documents/projects/grateful/gratefuldead.db
 
 # 3. Build + install the app bundle. The host IP is baked into the launcher and
 #    must be the LAN IP the speakers reach — NOT the Tailscale 100.x. This grabs

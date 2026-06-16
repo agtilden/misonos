@@ -17,6 +17,18 @@ Modern TypeScript Sonos controller targeting fast LAN control.
 - `apps/bridge`: local Node TypeScript LAN bridge for SSDP discovery and Sonos SOAP calls.
 - `packages/sonos-protocol`: shared Sonos models plus SOAP/DIDL/XML helpers.
 
+### SMAPI source servers
+
+MiSonos bundles its own Sonos Music API (SMAPI) servers under `apps/`, each
+exposing a music source to your speakers:
+
+- `apps/grateful-smapi`: Grateful Dead recordings from archive.org. Data comes
+  from [`grateful-dead-db`](https://github.com/agtilden/grateful-dead-db). (port 4319)
+- `apps/phish-smapi`: Phish shows via [Phish.in](https://phish.in). (port 4320)
+- `apps/ytmusic-smapi`: YouTube Music. (port 4321)
+- `apps/lma-smapi`: the [Live Music Archive](https://archive.org/details/etree). (port 4322)
+- `apps/podcast-smapi`: podcasts (Apple Podcasts directory + Podcast Index). (port 4323)
+
 The web app talks to the bridge through a typed HTTP/SSE API. That boundary keeps the UI decoupled from the transport, so a native LAN transport could replace the local Node bridge without changing the web app.
 
 ## Installation
