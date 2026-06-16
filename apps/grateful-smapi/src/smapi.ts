@@ -1,4 +1,4 @@
-import { GratefulDb, trackUrl, trackDurationSeconds, type TrackRow } from "./db.js";
+import { GratefulDb, trackUrl, trackDurationSeconds, recordingLabel, type TrackRow } from "./db.js";
 import { decodeId, encodeId, type GratefulId } from "./ids.js";
 import { escapeXml, extractTagInt, extractTagText, soapResponse, soapFault } from "./soap.js";
 
@@ -167,7 +167,7 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       const recordings = ctx.db.recordingsByConcert(id.concertId);
       return listed(recordings.map((row) => ({
         id: encodeId({ kind: "recording", recordingId: row.id }),
-        title: row.title,
+        title: recordingLabel(row.id),
         type: "album" as const,
         artist: "Grateful Dead",
         albumArtUri: archiveThumbUrl(row.id)
