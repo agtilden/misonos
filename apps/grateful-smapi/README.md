@@ -14,6 +14,22 @@ Defaults:
 
 Override with env vars `MISONOS_GRATEFUL_HOST`, `MISONOS_GRATEFUL_PORT`, `MISONOS_GRATEFUL_DB`, `MISONOS_GRATEFUL_NAME`.
 
+## Database
+
+The SQLite database is built from raw SQL in the
+[`grateful-dead-db`](https://github.com/agtilden/grateful-dead-db) repo:
+
+```
+git clone https://github.com/agtilden/grateful-dead-db
+cd grateful-dead-db && ./build.sh
+export MISONOS_GRATEFUL_DB=$PWD/gratefuldead.db
+```
+
+That build populates `setlist.song_id` (empty in the original archive dump) and
+indexes it, which the *By Song* browse path now relies on — point
+`MISONOS_GRATEFUL_DB` at a DB produced by `build.sh` rather than the raw archive
+dump.
+
 ## Register on a Sonos speaker
 
 1. Find your bridge host's LAN IP (e.g. `192.168.1.50`) — the speakers need to reach this machine.
