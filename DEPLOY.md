@@ -77,8 +77,8 @@ npm install
 #    (there is no .env loading for the native path), so export them first:
 
 #    Your host's LAN IP the speakers can reach — NOT the Tailscale 100.x.
-#    Find it on macOS with:  ipconfig getifaddr en0
-export MISONOS_BRIDGE_PUBLIC_HOST=192.168.68.50
+#    This grabs the en0 LAN IP automatically (override if Wi-Fi isn't en0):
+export MISONOS_BRIDGE_PUBLIC_HOST=$(ipconfig getifaddr en0)
 
 #    Only if the DB isn't at the default ~/Documents/projects/grateful/gratefuldead.db:
 export MISONOS_GRATEFUL_DB="$HOME/path/to/gratefuldead.db"
