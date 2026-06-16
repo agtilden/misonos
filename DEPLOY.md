@@ -4,8 +4,8 @@ Runs the whole stack (bridge + 3 SMAPI services + web PWA) on a host on your LAN
 Two ways to run it:
 
 - **Option A — Docker** on a **Linux** host (uses host networking).
-- **Option B — Native Node** on any host, **including macOS** (no Docker, so no
-  host-networking limitation).
+- **Option B — macOS app bundle** (`MiSonos.app` via `install.sh`) — required on
+  macOS, where Local Network access is gated behind a per-app permission.
 
 Both need the Grateful Dead SQLite DB (`gratefuldead.db`, ~71 MB) — it lives
 outside this repo and must be copied to the host.
@@ -52,44 +52,49 @@ Logs: `docker compose logs -f bridge` (or `grateful` / `phish` / `ytmusic` /
 
 ---
 
-## Option B — Native (Node, incl. macOS)
+## Option B — macOS app bundle
 
-Use this when you don't have a Linux box — e.g. running it on a Mac. The
-processes run directly on the host's network, so Sonos discovery and playback
-work without Docker's host-networking caveat.
+Use this on a Mac (e.g. a closet Mac mini). You **cannot** just `npm start` on
+modern macOS: Sequoia+ (Tahoe / Darwin 25) gates Local Network access behind a
+per-app privacy permission, and a bare CLI process (`node`/`npm` from a shell,
+SSH, `tmux`, `nohup`, `pm2`, or a plain LaunchAgent) has no bundle identity, so
+macOS **silently denies** SSDP discovery and SOAP control — `/api/zones` comes
+back `[]` with no prompt. The fix is to run inside a signed `MiSonos.app` that
+declares `NSLocalNetworkUsageDescription`. `deploy/macos/install.sh` builds it.
+
+> **Full rationale, troubleshooting, and the update recipe live in
+> [`deploy/macos/README.md`](deploy/macos/README.md).** This is the short path.
 
 ### Requirements
 
-- **Node 22 LTS** (`node -v` → v22.x). On macOS: `brew install node@22`.
-- **macOS only:** Xcode Command Line Tools for `better-sqlite3`'s native build:
-  `xcode-select --install`.
+- **Node 22 LTS** (`node -v` → v22.x): `brew install node@22`.
+- **Xcode Command Line Tools** — for `better-sqlite3`'s native build *and* the
+  bundle's C launcher: `xcode-select --install`.
 
 ### Setup
 
 ```sh
-# 1. Clone and install (plain install — do NOT use --omit=dev; the build needs
-#    tsc/tsx/vite, which are devDependencies):
+# 1. Clone (install.sh runs `npm install` itself):
 git clone https://github.com/agtilden/misonos.git
 cd misonos
-npm install
 
-# 2. Point at the right LAN IP and DB. These are read from the environment
-#    (there is no .env loading for the native path), so export them first:
+# 2. Drop the Grateful Dead DB in place (or set MISONOS_GRATEFUL_DB):
+cp /path/to/gratefuldead.db ~/Documents/projects/grateful/gratefuldead.db
 
-#    Your host's LAN IP the speakers can reach — NOT the Tailscale 100.x.
-#    This grabs the en0 LAN IP automatically (override if Wi-Fi isn't en0):
-export MISONOS_BRIDGE_PUBLIC_HOST=$(ipconfig getifaddr en0)
+# 3. Build + install the app bundle. The host IP is baked into the launcher and
+#    must be the LAN IP the speakers reach — NOT the Tailscale 100.x. This grabs
+#    the en0 LAN IP automatically (override if Wi-Fi isn't en0):
+MISONOS_BRIDGE_PUBLIC_HOST=$(ipconfig getifaddr en0) deploy/macos/install.sh
 
-#    Only if the DB isn't at the default ~/Documents/projects/grateful/gratefuldead.db:
-export MISONOS_GRATEFUL_DB="$HOME/path/to/gratefuldead.db"
-
-# 3. Build the web app and run the whole stack:
-npm start
+# 4. Launch from the GUI, force a LAN call, then click "Allow" on the prompt:
+open ~/Applications/MiSonos.app
+curl -s -X POST http://localhost:4317/api/discover >/dev/null   # then click Allow
+curl -s http://localhost:4317/api/zones                         # named zones come back
 ```
 
-`npm start` builds the web app (so the real service worker is generated — the
-PWA is only installable from a production build) and runs the backends plus the
-built web app served on **`:4173`**. Open `http://<lan-ip>:4173`.
+The installer registers `MiSonos.app` as a **hidden Login Item**, so it
+auto-starts with the GUI session — no `pm2`/`nohup` needed. The web app is served
+on **`:4173`**; open `http://<lan-ip>:4173`.
 
 For HTTPS / an installable PWA over Tailscale, on this host:
 
@@ -99,27 +104,29 @@ tailscale serve --bg 4173
 
 then open `https://<host>.<tailnet>.ts.net` on your phone.
 
-### Keep it running
+### Updating / managing
 
-`npm start` stops when you close the terminal. To keep it alive:
+To pull a new version, re-run `install.sh`, and re-grant if needed, follow the
+**Updating to a new version** and **Managing the service** sections in
+[`deploy/macos/README.md`](deploy/macos/README.md). In short:
 
 ```sh
-# quick:
-nohup npm start > misonos.log 2>&1 &
-
-# or cleaner, survives reboots/crashes:
-npm i -g pm2
-pm2 start npm --name misonos -- start
-pm2 save && pm2 startup   # follow the printed command for launch-on-boot
+git pull
+pkill -f 'MiSonos.app/Contents/MacOS/misonos'                     # stop
+MISONOS_BRIDGE_PUBLIC_HOST=$(ipconfig getifaddr en0) deploy/macos/install.sh
+open ~/Applications/MiSonos.app                                   # relaunch from the GUI
 ```
 
-### `npm start` vs `npm run dev`
+> The Local Network grant is tied to the bundle's code hash, so an update may
+> drop it and re-prompt — approve again after the `open`. See the deploy README
+> if no prompt appears.
 
-- `npm start` — production-ish: built web, real service worker, installable PWA.
-  A crashed source (e.g. a missing Grateful DB) does **not** take down the
-  bridge. Use this to run it.
-- `npm run dev` — hot-reload dev server on `:6173`. The dev-mode service worker
-  is unreliable for PWA install. Use this only while editing code.
+### Local dev (not deploy)
+
+`npm run dev` runs a hot-reload web server on `:6173`. Run it from a Terminal
+that already has Local Network permission (the Terminal app is the responsible
+parent); the dev-mode service worker is unreliable for PWA install, so use it
+only while editing code.
 
 ---
 
