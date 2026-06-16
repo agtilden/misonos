@@ -354,6 +354,20 @@ export function App() {
     void loadVolumes(selectedGroup);
   };
 
+  // When the user lowers the volume cap, pull any currently-louder rooms down to it so
+  // the ceiling takes effect immediately (and the sliders aren't stuck above their max).
+  const enforceVolumeCap = useCallback(async (cap: number) => {
+    const overZones = Object.values(zoneVolumes).filter((entry) => entry.volume > cap);
+    await Promise.all(overZones.map(async (entry) => {
+      const next = await bridgeApi.volume(entry.id, { volume: cap });
+      setZoneVolumes((current) => ({ ...current, [next.id]: next }));
+    }));
+    if (selectedGroup && groupVolume && groupVolume.volume > cap) {
+      setGroupVolume(await bridgeApi.setGroupVolume(selectedGroup.id, { volume: cap }));
+      void loadVolumes(selectedGroup);
+    }
+  }, [zoneVolumes, selectedGroup, groupVolume, loadVolumes]);
+
   const toggleGroupMute = async () => {
     if (!selectedGroup || !groupVolume) return;
     setGroupVolume(await bridgeApi.setGroupVolume(selectedGroup.id, { muted: !groupVolume.muted }));
@@ -530,6 +544,7 @@ export function App() {
               setMaxVolume(value);
               setPref(MAX_VOLUME_PREF, value);
             }}
+            onMaxVolumeCommit={(value) => void enforceVolumeCap(value)}
           />
           <SourceLogoSettings customIcons={customIcons} onChanged={() => void refreshCustomIcons()} />
           <Equalizer zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
@@ -1813,9 +1828,10 @@ interface PreferencesProps {
   onShowDevPanelsChange: (value: boolean) => void;
   maxVolume: number;
   onMaxVolumeChange: (value: number) => void;
+  onMaxVolumeCommit: (value: number) => void;
 }
 
-function Preferences({ showDevPanels, onShowDevPanelsChange, maxVolume, onMaxVolumeChange }: PreferencesProps) {
+function Preferences({ showDevPanels, onShowDevPanelsChange, maxVolume, onMaxVolumeChange, onMaxVolumeCommit }: PreferencesProps) {
   return (
     <section className="queue-panel" aria-label="Preferences">
       <div className="section-heading">
@@ -1835,6 +1851,8 @@ function Preferences({ showDevPanels, onShowDevPanelsChange, maxVolume, onMaxVol
             value={maxVolume}
             aria-label="Maximum volume"
             onChange={(event) => onMaxVolumeChange(Number.parseInt(event.currentTarget.value, 10))}
+            onPointerUp={(event) => onMaxVolumeCommit(Number.parseInt(event.currentTarget.value, 10))}
+            onKeyUp={(event) => onMaxVolumeCommit(Number.parseInt(event.currentTarget.value, 10))}
           />
           <output>{maxVolume}</output>
         </span>
