@@ -1,6 +1,6 @@
 import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
 import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { bridgeApi, subscribeBridgeEvents } from "./api.js";
@@ -805,6 +805,23 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const sourceInitializedRef = useRef(false);
   const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ item: SourceBrowseItem; x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
+  // The action menu opens at the click point, which is near the right edge for the
+  // "…" button — nudge it back on-screen after measuring its rendered size.
+  useLayoutEffect(() => {
+    if (!menu) { setMenuPos(null); return; }
+    const rect = menuRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const margin = 8;
+    let left = menu.x;
+    let top = menu.y;
+    const overflowX = rect.right - (window.innerWidth - margin);
+    if (overflowX > 0) left -= overflowX;
+    const overflowY = rect.bottom - (window.innerHeight - margin);
+    if (overflowY > 0) top -= overflowY;
+    setMenuPos({ left: Math.max(margin, left), top: Math.max(margin, top) });
+  }, [menu]);
   const [addTo, setAddTo] = useState<SourceBrowseItem | null>(null);
 
   const persistSourceId = useCallback((id: string) => {
@@ -1347,7 +1364,7 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
       {menu ? (
         <>
           <div className="action-menu-backdrop" onClick={() => setMenu(null)} onContextMenu={(event) => { event.preventDefault(); setMenu(null); }} />
-          <div className="action-menu" style={{ left: menu.x, top: menu.y }} role="menu">
+          <div ref={menuRef} className="action-menu" style={{ left: menuPos?.left ?? menu.x, top: menuPos?.top ?? menu.y }} role="menu">
             <button type="button" className="action-menu-item" onClick={() => { void enqueueItem(menu.item, "next"); setMenu(null); }}>
               <ListPlus size={16} /> <span className="action-menu-item-label"><span>Play next</span></span>
             </button>
