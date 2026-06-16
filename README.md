@@ -9,7 +9,7 @@ Modern TypeScript Sonos controller targeting fast LAN control.
 | | | |
 | :---: | :---: | :---: |
 | ![Now playing](docs/screenshots/now-playing.jpg)<br>**Now playing** | ![Zones](docs/screenshots/now-playing-zones.jpg)<br>**Zones** | ![Browse music](docs/screenshots/music-browse.jpg)<br>**Browse music** |
-| ![Zone editor](docs/screenshots/zone-editor.jpg)<br>**Zone editor** | ![EQ editor](docs/screenshots/eq-editor.jpg)<br>**EQ editor** | |
+| ![Zone editor](docs/screenshots/zone-editor.jpg)<br>**Zone editor** | ![EQ editor](docs/screenshots/eq-editor.jpg)<br>**EQ editor** | ![Settings](docs/screenshots/settings.jpg)<br>**Settings** |
 
 ## Architecture
 
