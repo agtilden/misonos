@@ -6,11 +6,11 @@ Modern TypeScript Sonos controller targeting fast LAN control.
 
 <table align="center">
   <tr align="center">
-    <td><img src="docs/rebus/misono-ux10.svg" width="150" alt="Misono UX10 chef's knife"></td>
+    <td><img src="docs/screenshots/HMI-UXGY-300.01.jpg" height="150" alt="Misono UX10 chef's knife"></td>
     <td><b>+</b></td>
-    <td><img src="docs/rebus/goes-to-11.svg" width="150" alt="An amplifier that goes to 11"></td>
+    <td><img src="docs/screenshots/Goes-to-11.jpg" height="150" alt="An amplifier that goes to 11"></td>
     <td><b>=</b></td>
-    <td><img src="docs/rebus/misonos-ux11.svg" width="150" alt="MiSonos UX11"></td>
+    <td><img src="docs/rebus/misonos-ux11.svg" height="150" alt="MiSonos UX11"></td>
   </tr>
 </table>
 
