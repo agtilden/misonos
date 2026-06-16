@@ -4,6 +4,7 @@ import type { Favorite, Playlist, PlaylistItem, PlaybackMode, SonosGroup } from 
 import { bridgeApi } from "./api.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { buildGroupOptions } from "./groupPalette.js";
+import { useDialogs } from "./dialogs.js";
 
 interface LibraryViewProps {
   groups: SonosGroup[];
@@ -14,6 +15,7 @@ interface LibraryViewProps {
 type OpenPlaylist = { playlist: Playlist; items: PlaylistItem[] };
 
 export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryViewProps) {
+  const dialogs = useDialogs();
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [open, setOpen] = useState<OpenPlaylist | null>(null);
@@ -86,7 +88,8 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   };
 
   const deletePlaylist = async (playlist: Playlist) => {
-    if (!window.confirm(`Delete playlist “${playlist.name}”?`)) return;
+    const ok = await dialogs.confirm({ message: `Delete playlist “${playlist.name}”?`, confirmLabel: "Delete" });
+    if (!ok) return;
     await bridgeApi.deletePlaylist(playlist.id);
     await refresh();
   };

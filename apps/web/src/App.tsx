@@ -7,9 +7,10 @@ import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
+import { useDialogs } from "./dialogs.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions } from "./groupPalette.js";
-import { LAST_GROUP_PREF, LAST_SOURCE_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
+import { LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
 const GroupEditor = lazy(() => import("./GroupEditor.js").then((module) => ({ default: module.GroupEditor })));
 const LibraryView = lazy(() => import("./LibraryView.js").then((module) => ({ default: module.LibraryView })));
@@ -40,6 +41,14 @@ export function App() {
   const [message, setMessage] = useState("Ready");
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
   const [showDevPanels, setShowDevPanels] = useState<boolean>(() => readLocalPref(SHOW_DEV_PANELS_PREF) ?? false);
+  // Volume ceiling (0–100): the sliders span 0..maxVolume, so the controller can't go louder.
+  const [maxVolume, setMaxVolume] = useState<number>(() => readLocalPref(MAX_VOLUME_PREF) ?? 100);
+  const dialogs = useDialogs();
+  // Confirm a large (>30) volume jump — e.g. an accidental tap on the slider track.
+  const confirmVolumeJump = useCallback(async (previous: number | undefined, next: number) => {
+    if (typeof previous !== "number" || Math.abs(next - previous) <= 30) return true;
+    return dialogs.confirm({ message: `Change volume from ${previous}% to ${next}%?`, confirmLabel: "Change volume" });
+  }, [dialogs]);
   // sourceId → version token for user-uploaded service logos (shared by the source
   // dropdown and the Settings upload widget); the token busts the browser cache.
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
@@ -140,6 +149,9 @@ export function App() {
     });
     void loadPref(SHOW_DEV_PANELS_PREF).then((value) => {
       if (!cancelled && value !== null) setShowDevPanels(value);
+    });
+    void loadPref(MAX_VOLUME_PREF).then((value) => {
+      if (!cancelled && value !== null) setMaxVolume(Math.min(100, Math.max(0, value)));
     });
     return () => { cancelled = true; };
   }, []);
@@ -311,7 +323,7 @@ export function App() {
 
   const saveQueueAsPlaylist = async () => {
     if (!selectedGroup) return;
-    const name = window.prompt("Save current queue as playlist:")?.trim();
+    const name = (await dialogs.prompt({ message: "Save current queue as playlist:", placeholder: "Playlist name", confirmLabel: "Save" }))?.trim();
     if (!name) return;
     try {
       const result = await bridgeApi.savePlaylistFromQueue(name, selectedGroup.id);
@@ -324,7 +336,7 @@ export function App() {
 
   const setZoneVolume = async (zoneId: string, volume: number) => {
     const previous = zoneVolumes[zoneId]?.volume;
-    if (!confirmVolumeJump(previous, volume)) return;
+    if (!(await confirmVolumeJump(previous, volume))) return;
     const next = await bridgeApi.volume(zoneId, { volume });
     setZoneVolumes((current) => ({ ...current, [next.id]: next }));
   };
@@ -337,7 +349,7 @@ export function App() {
 
   const setSelectedGroupVolume = async (volume: number) => {
     if (!selectedGroup) return;
-    if (!confirmVolumeJump(groupVolume?.volume, volume)) return;
+    if (!(await confirmVolumeJump(groupVolume?.volume, volume))) return;
     setGroupVolume(await bridgeApi.setGroupVolume(selectedGroup.id, { volume }));
     void loadVolumes(selectedGroup);
   };
@@ -513,6 +525,11 @@ export function App() {
               setShowDevPanels(value);
               setPref(SHOW_DEV_PANELS_PREF, value);
             }}
+            maxVolume={maxVolume}
+            onMaxVolumeChange={(value) => {
+              setMaxVolume(value);
+              setPref(MAX_VOLUME_PREF, value);
+            }}
           />
           <SourceLogoSettings customIcons={customIcons} onChanged={() => void refreshCustomIcons()} />
           <Equalizer zones={displayGroups.flatMap((group) => group.zones).filter((zone) => zone.visible)} />
@@ -655,6 +672,7 @@ export function App() {
               label={primaryVolumeLabel}
               value={primaryVolume?.volume ?? 0}
               muted={primaryVolume?.muted ?? false}
+              maxVolume={maxVolume}
               disabled={!primaryVolume}
               onChange={setPrimaryVolume}
               onMute={togglePrimaryMute}
@@ -678,6 +696,7 @@ export function App() {
                       label={zone.name}
                       value={zoneVolumes[zone.id]?.volume ?? 0}
                       muted={zoneVolumes[zone.id]?.muted ?? false}
+                      maxVolume={maxVolume}
                       disabled={!zoneVolumes[zone.id]}
                       onChange={(volume) => setZoneVolume(zone.id, volume)}
                       onMute={() => toggleZoneMute(zone.id)}
@@ -1792,14 +1811,34 @@ function SourceLogoSettings({ customIcons, onChanged }: SourceLogoSettingsProps)
 interface PreferencesProps {
   showDevPanels: boolean;
   onShowDevPanelsChange: (value: boolean) => void;
+  maxVolume: number;
+  onMaxVolumeChange: (value: number) => void;
 }
 
-function Preferences({ showDevPanels, onShowDevPanelsChange }: PreferencesProps) {
+function Preferences({ showDevPanels, onShowDevPanelsChange, maxVolume, onMaxVolumeChange }: PreferencesProps) {
   return (
     <section className="queue-panel" aria-label="Preferences">
       <div className="section-heading">
         <h2>Preferences</h2>
       </div>
+      <label className="pref-row">
+        <span className="pref-label">
+          <strong>Maximum volume</strong>
+          <small>The volume sliders span 0–this, so the controller never goes louder.</small>
+        </span>
+        <span className="pref-volume">
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={maxVolume}
+            aria-label="Maximum volume"
+            onChange={(event) => onMaxVolumeChange(Number.parseInt(event.currentTarget.value, 10))}
+          />
+          <output>{maxVolume}</output>
+        </span>
+      </label>
       <label className="pref-row">
         <span className="pref-label">
           <strong>Show developer panels</strong>
@@ -2451,6 +2490,7 @@ interface VolumeControlProps {
   label: string;
   value: number;
   muted: boolean;
+  maxVolume?: number;
   disabled?: boolean;
   onChange: (volume: number) => void;
   onMute: () => void;
@@ -2458,7 +2498,7 @@ interface VolumeControlProps {
   swallowFirstAdjustment?: boolean;
 }
 
-function VolumeControl({ label, value, muted, disabled = false, onChange, onMute, onSliderPointerDown, swallowFirstAdjustment = false }: VolumeControlProps) {
+function VolumeControl({ label, value, muted, maxVolume = 100, disabled = false, onChange, onMute, onSliderPointerDown, swallowFirstAdjustment = false }: VolumeControlProps) {
   const ignoreUntilRelease = useRef(false);
   return (
     <div className="volume-control">
@@ -2469,8 +2509,8 @@ function VolumeControl({ label, value, muted, disabled = false, onChange, onMute
         aria-label={`${label} volume`}
         type="range"
         min="0"
-        max="100"
-        value={value}
+        max={maxVolume}
+        value={Math.min(value, maxVolume)}
         disabled={disabled}
         onPointerDown={() => {
           if (swallowFirstAdjustment) ignoreUntilRelease.current = true;
@@ -2531,12 +2571,6 @@ function formatDuration(totalSeconds: number): string {
 
 function readStoredGroupKey(): string {
   return readLocalPref(LAST_GROUP_PREF) ?? "";
-}
-
-function confirmVolumeJump(previous: number | undefined, next: number): boolean {
-  if (typeof previous !== "number") return true;
-  if (Math.abs(next - previous) <= 30) return true;
-  return window.confirm(`Change volume from ${previous} to ${next}?`);
 }
 
 function membershipKey(group: SonosGroup): string {

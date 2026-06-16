@@ -2022,6 +2022,52 @@ small {
   color: #9aa39f;
 }
 
+.pref-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.pref-volume input[type="range"] {
+  width: 140px;
+}
+
+.pref-volume output {
+  min-width: 2.2ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #aeb4ad;
+}
+
+.confirm-modal {
+  max-width: 360px;
+  display: grid;
+  gap: 16px;
+}
+
+.confirm-modal-message {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.confirm-modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(242, 240, 232, 0.18);
+  border-radius: 6px;
+  color: #f2f0e8;
+  padding: 9px 11px;
+  font: inherit;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .pref-row input[type="checkbox"] {
   width: 20px;
   height: 20px;
