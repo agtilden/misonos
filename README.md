@@ -44,7 +44,7 @@ MISONOS_SPEAKER_IPS=192.168.1.101,192.168.1.102 npm run dev:bridge
 If event subscriptions fail because the bridge chooses the wrong local network interface, set the callback address explicitly:
 
 ```sh
-MISONOS_CALLBACK_HOST=192.168.1.50 npm run dev:bridge
+MISONOS_CALLBACK_HOST=$(ipconfig getifaddr en0) npm run dev:bridge
 ```
 
 ## Checks
