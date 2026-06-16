@@ -162,6 +162,7 @@ export function App() {
   const applySnapshot = useCallback((snapshot: BridgeSnapshot) => {
     setGroups((current) => (groupsTopologyKey(current) === groupsTopologyKey(snapshot.groups) ? current : snapshot.groups));
     setSelectedGroupId((current) => {
+      if (current === LOCAL_DEVICE_ID) return current; // synthetic device target — not a Sonos group
       if (current && snapshot.groups.some((group) => group.id === current)) return current;
       const stored = storedGroupKeyRef.current;
       if (stored) {
