@@ -1,11 +1,10 @@
 import http from "node:http";
 import type { SourceBrowseItem, SourceBrowseResponse, SourceTrackInfo } from "@misonos/sonos-protocol";
 import type { YtmConfig } from "./config.js";
-import { getClient, getStreamUrl } from "./client.js";
+import { getStreamUrl } from "./client.js";
 import { getTrackInfo } from "./ytmApi.js";
 import { decodeId, encodeId } from "./ids.js";
 import { browse as runBrowse, runSearch as runTypedSearch } from "./browse.js";
-import { currentStatus, signOut, startSignIn } from "./auth.js";
 import { clearCookies, cookieAuthStatus, setCookiesFromPaste } from "./cookieAuth.js";
 import { dispatch as smapiDispatch } from "./smapi.js";
 import { parseSoapRequest, soapFault } from "./soap.js";
@@ -43,29 +42,20 @@ export function createServer(config: YtmConfig): http.Server {
         return sendJson(response, 200, await resolveTrack(rawId));
       }
       if (request.method === "GET" && url.pathname === "/auth/status") {
-        await getClient();
-        // Merge the OAuth state with the pasted-cookie state so the UI can show both.
-        return sendJson(response, 200, { ...currentStatus(), ...cookieAuthStatus() });
+        // Personalized browse (Library/Supermix) and signed-in-only streams use
+        // pasted cookies; there's no account sign-in beyond that.
+        return sendJson(response, 200, cookieAuthStatus());
       }
       if (request.method === "POST" && url.pathname === "/auth/cookies") {
         const raw = await readBody(request);
         try {
-          return sendJson(response, 200, { ...currentStatus(), ...(await setCookiesFromPaste(raw)) });
+          return sendJson(response, 200, await setCookiesFromPaste(raw));
         } catch (error) {
           return sendJson(response, 400, { error: error instanceof Error ? error.message : "Invalid paste" });
         }
       }
       if (request.method === "POST" && url.pathname === "/auth/cookies/clear") {
-        return sendJson(response, 200, { ...currentStatus(), ...(await clearCookies()) });
-      }
-      if (request.method === "POST" && url.pathname === "/auth/start") {
-        const yt = await getClient();
-        return sendJson(response, 200, startSignIn(yt));
-      }
-      if (request.method === "POST" && url.pathname === "/auth/signout") {
-        const yt = await getClient();
-        await signOut(yt);
-        return sendJson(response, 200, currentStatus());
+        return sendJson(response, 200, await clearCookies());
       }
       if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/smapi")) {
         const raw = await readBody(request);

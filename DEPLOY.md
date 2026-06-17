@@ -149,9 +149,10 @@ only while editing code.
   it's wrong (or auto-detected as the Tailscale `100.x` address) playback fails
   even though the UI loads. Set it explicitly (`MISONOS_LAN_IP` for Docker,
   `MISONOS_BRIDGE_PUBLIC_HOST` for native).
-- **YouTube Music sign-in** persists (`data/ytmusic.json` under Docker;
-  `~/.misonos/ytmusic.json` natively, override with `YTMUSIC_CREDENTIALS_PATH`),
-  so it survives restarts.
+- **YouTube Music** searches and browses anonymously out of the box. Pasting your
+  YT Music cookies (Settings → YouTube Music) unlocks Library and My Supermix; the
+  cookies persist (`data/ytmusic-cookies.json` under Docker; `~/.misonos/ytmusic-cookies.json`
+  natively, override with `YTMUSIC_COOKIES_PATH`) so they survive restarts.
 - **Phish.in** works without a key; set `MISONOS_PHISH_API_KEY` if you have one.
 - **Podcasts** work without a key (Apple Podcasts directory). Set
   `PODCASTINDEX_KEY` + `PODCASTINDEX_SECRET` (free from api.podcastindex.org) for

@@ -295,16 +295,6 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, await service.sourceAuthStatus(decodeURIComponent(sourceAuthStatusMatch[1])));
     }
 
-    const sourceAuthStartMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/start$/);
-    if (request.method === "POST" && sourceAuthStartMatch) {
-      return json(response, await service.sourceAuthStart(decodeURIComponent(sourceAuthStartMatch[1])));
-    }
-
-    const sourceAuthSignOutMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/signout$/);
-    if (request.method === "POST" && sourceAuthSignOutMatch) {
-      return json(response, await service.sourceAuthSignOut(decodeURIComponent(sourceAuthSignOutMatch[1])));
-    }
-
     const sourceAuthCookiesMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/auth\/cookies$/);
     if (request.method === "POST" && sourceAuthCookiesMatch) {
       const body = await readJson<{ paste?: string }>(request);
