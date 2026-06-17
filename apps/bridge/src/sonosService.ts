@@ -259,7 +259,11 @@ export class SonosService {
   // Map an x-sonos-http SMAPI URI back to source-track metadata. Cache-first;
   // falls back to fetching from the source (e.g. after a bridge restart).
   private async smapiTrackForUri(uri: string | undefined): Promise<SourceTrackInfo | undefined> {
-    const parsed = parseSmapiUri(uri);
+    // Recover the source ref from EITHER an x-sonos-http SMAPI URI or our
+    // /api/stream proxy URL — otherwise proxy-streamed tracks (radio, podcasts,
+    // LMA) can't reach their enqueue-time metadata, and now-playing falls back to
+    // the URL filename ("CNN.mp3") with no art.
+    const parsed = this.queueUriToRef(uri);
     if (!parsed) return undefined;
     const key = `${parsed.sourceId}\n${parsed.trackId}`;
     const cached = this.smapiTrackMeta.get(key);
@@ -280,7 +284,7 @@ export class SonosService {
   }
 
   private smapiTrackFromCache(uri: string | undefined): SourceTrackInfo | undefined {
-    const parsed = parseSmapiUri(uri);
+    const parsed = this.queueUriToRef(uri);
     if (!parsed) return undefined;
     return this.smapiTrackMeta.get(`${parsed.sourceId}\n${parsed.trackId}`);
   }
