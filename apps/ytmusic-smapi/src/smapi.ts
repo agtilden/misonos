@@ -90,9 +90,7 @@ async function handleGetMediaURI(body: string): Promise<string> {
   if (id.kind !== "track") throw new Error("Not a track id");
   // S1 hardware (ZP100 era) can't reliably fetch googlevideo HTTPS URLs, so
   // hand Sonos the bridge's plain-HTTP stream proxy instead of the raw URL.
-  const streamUrl = bridgeStreamUrl(id.videoId);
-  console.log(`[smapi] getMediaURI videoId=${id.videoId} -> ${streamUrl}`);
-  const inner = `<getMediaURIResult>${escapeXml(streamUrl)}</getMediaURIResult>`;
+  const inner = `<getMediaURIResult>${escapeXml(bridgeStreamUrl(id.videoId))}</getMediaURIResult>`;
   return soapResponse("getMediaURI", inner);
 }
 

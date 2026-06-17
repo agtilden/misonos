@@ -345,41 +345,24 @@ export class SonosService {
       previous: "Previous"
     } satisfies Record<TransportAction, string>;
     const args = action === "play" ? { InstanceID: 0, Speed: 1 } : { InstanceID: 0 };
-    // --- debug: snapshot what the coordinator is pointed at before the action ---
-    try {
-      const [pos, info] = await Promise.all([
-        callSoap(coordinator.ipAddress, "AVTransport", "GetPositionInfo", { InstanceID: 0 }),
-        callSoap(coordinator.ipAddress, "AVTransport", "GetTransportInfo", { InstanceID: 0 })
-      ]);
-      console.log(`[transport] ${action} group=${groupId} coord=${coordinator.ipAddress} state=${info.CurrentTransportState} track=${pos.Track} uri=${pos.TrackURI}`);
-    } catch (snapErr) {
-      console.log(`[transport] ${action} group=${groupId} coord=${coordinator.ipAddress} (pre-snapshot failed: ${snapErr instanceof Error ? snapErr.message : snapErr})`);
-    }
     try {
       await callSoap(coordinator.ipAddress, "AVTransport", soapAction[action], args);
-      console.log(`[transport] ${action} -> ${soapAction[action]} SOAP ok`);
     } catch (error) {
-      const code = error instanceof SonosSoapError ? error.faultCode : undefined;
-      console.log(`[transport] ${action} -> ${soapAction[action]} SOAP FAULT code=${code ?? "?"} msg=${error instanceof Error ? error.message : error}`);
       // 701 "Transition not available" on Play means the coordinator's transport
       // isn't pointed at its queue (e.g. tracks were enqueued without playing, or
       // the speaker was idle). Point it at the queue and retry once.
       if (action === "play" && error instanceof SonosSoapError && error.faultCode === "701") {
-        console.log(`[transport] play 701 — pointing transport at queue (x-rincon-queue:${coordinator.uuid}#0) and retrying Play`);
         await callSoap(coordinator.ipAddress, "AVTransport", "SetAVTransportURI", {
           InstanceID: 0,
           CurrentURI: `x-rincon-queue:${coordinator.uuid}#0`,
           CurrentURIMetaData: ""
         });
         await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
-        console.log(`[transport] play retry after queue re-point: ok`);
       } else {
         throw error;
       }
     }
-    const settled = await this.nowPlayingSettled(groupId);
-    console.log(`[transport] ${action} settled state=${settled.state} uri=${settled.uri}`);
-    return settled;
+    return this.nowPlayingSettled(groupId);
   }
 
   async seekToPosition(groupId: string, positionSeconds: number): Promise<NowPlaying> {
@@ -787,8 +770,6 @@ export class SonosService {
       const proxiedTrack: SourceTrackInfo = { ...track, url: proxyUrl };
       return { uri: proxyUrl, metadata: buildDidl(proxiedTrack) };
     });
-    console.log(`[enqueue] mode=${mode} autoplay=${autoplay} coord=${coordinator.ipAddress} items=${queueItems.length}`);
-    for (const [i, item] of queueItems.entries()) console.log(`[enqueue]   #${i} uri=${item.uri}`);
 
     if (mode === "replace") {
       await callSoap(coordinator.ipAddress, "AVTransport", "RemoveAllTracksFromQueue", { InstanceID: 0 });
@@ -807,13 +788,9 @@ export class SonosService {
         CurrentURIMetaData: ""
       });
       await callSoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: "1" });
-      console.log(`[enqueue] replace: queue set, transport pointed at queue${autoplay ? ", issuing Play" : " (autoplay off)"}`);
       // Skip Play when the caller wants to inherit the prior transport state —
       // e.g. switching radio presets while paused shouldn't start playback.
-      if (autoplay) {
-        await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
-        console.log(`[enqueue] replace: Play issued ok`);
-      }
+      if (autoplay) await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
     } else if (mode === "next") {
       // EnqueueAsNext=1 alone isn't reliable on Sonos S1 — it can append. Read
       // the current track number and insert explicitly at currentTrack+1.
