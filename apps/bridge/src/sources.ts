@@ -30,7 +30,8 @@ const DEFAULT_SOURCES: SourceConfig[] = [
   { id: "phish-in", baseUrl: process.env.MISONOS_PHISH_URL ?? "http://127.0.0.1:4320" },
   { id: "youtube-music", baseUrl: process.env.MISONOS_YTM_URL ?? "http://127.0.0.1:4321" },
   { id: "live-music-archive", baseUrl: process.env.MISONOS_LMA_URL ?? "http://127.0.0.1:4322" },
-  { id: "podcasts", baseUrl: process.env.MISONOS_PODCAST_URL ?? "http://127.0.0.1:4323" }
+  { id: "podcasts", baseUrl: process.env.MISONOS_PODCAST_URL ?? "http://127.0.0.1:4323" },
+  { id: "tunein", baseUrl: process.env.MISONOS_TUNEIN_URL ?? "http://127.0.0.1:4324" }
 ];
 
 const FETCH_TIMEOUT_MS = 8000;

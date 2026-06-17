@@ -23,6 +23,7 @@ respective owners, including but not limited to:
   - Grateful Dead (Grateful Dead Productions / Rhino Entertainment)
   - Phish (Phish, Inc.) and phish.in
   - the Internet Archive and the Live Music Archive / etree.org
+  - TuneIn and RadioTime (TuneIn Inc.)
 
 Use of these names is for identification and interoperability only and does not
 imply any endorsement. The service emblems shipped under
@@ -43,6 +44,8 @@ Users are responsible for complying with each service's terms of use:
   - Podcast Index (https://podcastindex.org) and the Apple Podcasts directory
     for podcast discovery; episodes are played from each podcast's own RSS feed.
   - Apple iTunes Search API for cover-art lookups.
+  - TuneIn / RadioTime OPML directory (https://opml.radiotime.com) for internet
+    radio discovery; stations stream from each broadcaster's own server.
 
 --------------------------------------------------------------------------------
 Open-source components

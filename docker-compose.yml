@@ -21,6 +21,7 @@ services:
       MISONOS_PHISH_URL: "http://127.0.0.1:4320"
       MISONOS_YTM_URL: "http://127.0.0.1:4321"
       MISONOS_PODCAST_URL: "http://127.0.0.1:4323"
+      MISONOS_TUNEIN_URL: "http://127.0.0.1:4324"
       # Writable SQLite store (preferences, recently-viewed, EQ presets). WAL
       # sidecars (misonos.db-wal/-shm) live alongside it in ./data.
       MISONOS_BRIDGE_DB: "/data/misonos.db"
@@ -77,6 +78,19 @@ services:
       # key-free Apple Podcasts directory.
       PODCASTINDEX_KEY: "${PODCASTINDEX_KEY:-}"
       PODCASTINDEX_SECRET: "${PODCASTINDEX_SECRET:-}"
+    volumes:
+      - ./data:/data
+
+  tunein:
+    image: misonos-node
+    command: node apps/tunein-smapi/dist/index.js
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [bridge]
+    environment:
+      MISONOS_TUNEIN_PORT: "4324"
+      # Pinned stations live here (tunein.db-wal/-shm sit alongside in ./data).
+      MISONOS_TUNEIN_DB: "/data/tunein.db"
     volumes:
       - ./data:/data
 

@@ -38,6 +38,7 @@ exposing a music source to your speakers:
 - `apps/ytmusic-smapi`: YouTube Music. (port 4321)
 - `apps/lma-smapi`: the [Live Music Archive](https://archive.org/details/etree). (port 4322)
 - `apps/podcast-smapi`: podcasts (Apple Podcasts directory + Podcast Index). (port 4323)
+- `apps/tunein-smapi`: internet radio via the [TuneIn](https://tunein.com/radio/home/) directory. (port 4324)
 
 The web app talks to the bridge through a typed HTTP/SSE API. That boundary keeps the UI decoupled from the transport, so a native LAN transport could replace the local Node bridge without changing the web app.
 
@@ -84,5 +85,5 @@ free to use, modify, and share for any **noncommercial** purpose. See [LICENSE.m
 for the full terms and [NOTICE](NOTICE) for attributions and trademark disclaimers.
 
 MiSonos is an independent, fan-made project and is not affiliated with or endorsed by
-Sonos, Google/YouTube, Apple, the Internet Archive, or any artist or service it
-interoperates with.
+Sonos, Google/YouTube, Apple, the Internet Archive, TuneIn, or any artist or service
+it interoperates with.

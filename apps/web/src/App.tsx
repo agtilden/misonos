@@ -664,28 +664,32 @@ export function App() {
             <p className="eyebrow">{localMode ? "ON THIS DEVICE" : effectiveNowPlaying?.state ?? "UNKNOWN"}</p>
             <h2>{effectiveNowPlaying?.title ?? "Nothing selected"}</h2>
             <p>{[effectiveNowPlaying?.artist, effectiveNowPlaying?.album].filter(Boolean).join(" - ")}</p>
-            <div className="progress-copy">
-              <span>{effectiveProgress.positionLabel}</span>
-              <button
-                type="button"
-                className="playback-progress"
-                role="meter"
-                aria-label="Playback progress (click to seek)"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(effectiveProgress.percent)}
-                disabled={!transportEnabled || !effectiveProgress.durationSeconds}
-                onClick={(event) => {
-                  if (!effectiveProgress.durationSeconds) return;
-                  const target = event.currentTarget.getBoundingClientRect();
-                  const ratio = Math.max(0, Math.min(1, (event.clientX - target.left) / target.width));
-                  onSeekTo(Math.round(ratio * effectiveProgress.durationSeconds));
-                }}
-              >
-                <span style={{ width: `${effectiveProgress.percent}%` }} />
-              </button>
-              <span>{effectiveProgress.durationLabel}</span>
-            </div>
+            {/* Live streams (e.g. TuneIn radio) report no duration and can't be
+                seeked, so the scrub bar would be meaningless — hide it entirely. */}
+            {effectiveProgress.durationSeconds > 0 && (
+              <div className="progress-copy">
+                <span>{effectiveProgress.positionLabel}</span>
+                <button
+                  type="button"
+                  className="playback-progress"
+                  role="meter"
+                  aria-label="Playback progress (click to seek)"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(effectiveProgress.percent)}
+                  disabled={!transportEnabled || !effectiveProgress.durationSeconds}
+                  onClick={(event) => {
+                    if (!effectiveProgress.durationSeconds) return;
+                    const target = event.currentTarget.getBoundingClientRect();
+                    const ratio = Math.max(0, Math.min(1, (event.clientX - target.left) / target.width));
+                    onSeekTo(Math.round(ratio * effectiveProgress.durationSeconds));
+                  }}
+                >
+                  <span style={{ width: `${effectiveProgress.percent}%` }} />
+                </button>
+                <span>{effectiveProgress.durationLabel}</span>
+              </div>
+            )}
           </div>
           <div className="transport-bar">
             <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!transportEnabled} onClick={onPrevTrack}>
