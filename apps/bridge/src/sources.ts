@@ -7,7 +7,10 @@ interface SourceConfig {
 
 // Archive.org-backed sources whose own thumbnails are generic — prefer iTunes cover art,
 // falling back to the source's native (archive __ia_thumb) image.
-const ITUNES_ART_SOURCES = new Set(["grateful-dead-archive", "live-music-archive"]);
+// live-music-archive has no real cover art, so substitute iTunes album covers by
+// artist/album. grateful-dead-archive is NOT here: it now serves real GDAO show art
+// (see grateful-dead-db), which a generic iTunes album cover would wrongly override.
+const ITUNES_ART_SOURCES = new Set(["live-music-archive"]);
 
 // Rewrite a browse item's raw art into a bridge `/api/art?…` URL (proxied + cached, lazy).
 function bridgeArtUrl(sourceId: string, item: SourceBrowseItem): string | undefined {
