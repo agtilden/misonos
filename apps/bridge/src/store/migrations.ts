@@ -110,9 +110,26 @@ const m002_library: Migration = {
   }
 };
 
+// Radio presets: favorites gain a stored image (station logo) and a `preset`
+// flag. A preset is always a favorite; only radio-kind favorites are promoted.
+const m003_favorite_presets: Migration = {
+  async up(db: Kysely<unknown>): Promise<void> {
+    await db.schema.alterTable("favorite").addColumn("image", "text").execute();
+    await db.schema
+      .alterTable("favorite")
+      .addColumn("preset", "integer", (c) => c.notNull().defaultTo(0))
+      .execute();
+  },
+  async down(db: Kysely<unknown>): Promise<void> {
+    await db.schema.alterTable("favorite").dropColumn("preset").execute();
+    await db.schema.alterTable("favorite").dropColumn("image").execute();
+  }
+};
+
 const migrations: Record<string, Migration> = {
   "001_init": m001_init,
-  "002_library": m002_library
+  "002_library": m002_library,
+  "003_favorite_presets": m003_favorite_presets
 };
 
 export const migrationProvider: MigrationProvider = {

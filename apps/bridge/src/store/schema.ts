@@ -32,13 +32,15 @@ export interface EqPresetTable {
 
 export interface FavoriteTable {
   id: Generated<number>;
-  kind: string; // "track" | "album"
+  kind: string; // "track" | "album" | "radio"
   source_id: string;
   item_id: string;
   title: string;
   subtitle: string | null;
   artist: string | null;
   album: string | null;
+  image: string | null; // albumArtUri / station logo
+  preset: Generated<number>; // 0 | 1 — pinned for one-tap tuning
   created_at: string; // ISO-8601
 }
 

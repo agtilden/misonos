@@ -101,6 +101,45 @@ describe("bridge store", () => {
     }
   });
 
+  it("promotes a radio favorite to a preset and preserves it across re-favoriting", async () => {
+    const store = await createStore(":memory:");
+    try {
+      await store.addFavorite({ kind: "radio", sourceId: "tunein", itemId: "s1", title: "WNYC", albumArtUri: "http://logo" });
+      expect((await store.listFavorites())[0].preset).toBe(false);
+
+      expect(await store.setFavoritePreset("tunein", "s1", true)).toBe(true);
+      const promoted = (await store.listFavorites())[0];
+      expect(promoted.preset).toBe(true);
+      expect(promoted.albumArtUri).toBe("http://logo");
+
+      // Re-favoriting refreshes metadata but must not clear the preset.
+      await store.addFavorite({ kind: "radio", sourceId: "tunein", itemId: "s1", title: "WNYC-FM" });
+      const after = (await store.listFavorites())[0];
+      expect(after.title).toBe("WNYC-FM");
+      expect(after.preset).toBe(true);
+
+      // Removing the favorite drops the preset with it.
+      await store.removeFavorite("tunein", "s1");
+      expect(await store.listFavorites()).toHaveLength(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("refuses to make a non-radio favorite a preset", async () => {
+    const store = await createStore(":memory:");
+    try {
+      await store.addFavorite({ kind: "track", sourceId: "ytm", itemId: "v1", title: "A Song" });
+      expect(await store.setFavoritePreset("ytm", "v1", true)).toBe(false);
+      expect((await store.listFavorites())[0].preset).toBe(false);
+
+      // Promoting a favorite that doesn't exist is likewise rejected.
+      expect(await store.setFavoritePreset("ytm", "missing", true)).toBe(false);
+    } finally {
+      await store.close();
+    }
+  });
+
   it("creates a playlist, appends items, reports itemCount", async () => {
     const store = await createStore(":memory:");
     try {

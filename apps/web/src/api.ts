@@ -129,7 +129,7 @@ export const bridgeApi = {
     request<{ ids: string[] }>(`/api/sources/${encodeURIComponent(sourceId)}/subscriptions`),
   pinSource: (sourceId: string, id: string, pinned: boolean) =>
     request<{ pinned: boolean }>(`/api/sources/${encodeURIComponent(sourceId)}/pin`, { method: "POST", body: JSON.stringify({ id, pinned }) }),
-  playSourceItems: (sourceId: string, body: { trackIds: string[]; groupId: string; mode: PlaybackMode }) =>
+  playSourceItems: (sourceId: string, body: { trackIds: string[]; groupId: string; mode: PlaybackMode; autoplay?: boolean }) =>
     request<NowPlaying>(`/api/sources/${encodeURIComponent(sourceId)}/play`, { method: "POST", body: JSON.stringify(body) }),
   customServicePresets: () => request<CustomServicePresetView[]>("/api/music/custom-presets"),
   registerCustomService: (body: { presetId: string; zoneId: string; hostOverride?: string; uriOverride?: string; secureUri?: string }) =>
@@ -158,10 +158,12 @@ export const bridgeApi = {
   deleteEqPreset: (id: number) =>
     request<void>("/api/eq-presets/delete", { method: "POST", body: JSON.stringify({ id }) }),
   favorites: () => request<Favorite[]>("/api/favorites"),
-  addFavorite: (favorite: Omit<Favorite, "id" | "createdAt">) =>
+  addFavorite: (favorite: Omit<Favorite, "id" | "createdAt" | "preset">) =>
     request<Favorite>("/api/favorites", { method: "POST", body: JSON.stringify(favorite) }),
   removeFavorite: (sourceId: string, itemId: string) =>
     request<void>("/api/favorites/delete", { method: "POST", body: JSON.stringify({ sourceId, itemId }) }),
+  setFavoritePreset: (sourceId: string, itemId: string, preset: boolean) =>
+    request<void>("/api/favorites/preset", { method: "POST", body: JSON.stringify({ sourceId, itemId, preset }) }),
   playlists: () => request<Playlist[]>("/api/playlists"),
   playlist: (id: number) => request<{ playlist: Playlist; items: PlaylistItem[] }>(`/api/playlists/${id}`),
   createPlaylist: (name: string) =>

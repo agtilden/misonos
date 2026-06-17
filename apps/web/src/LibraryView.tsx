@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, Trash2 } from "lucide-react";
-import type { Favorite, Playlist, PlaylistItem, PlaybackMode, SonosGroup } from "@misonos/sonos-protocol";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, Star, Trash2 } from "lucide-react";
+import type { Favorite, Playlist, PlaylistItem, PlaybackMode, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
 import { bridgeApi } from "./api.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { buildGroupOptions } from "./groupPalette.js";
 import { useDialogs } from "./dialogs.js";
+import { useFavorites, type FavoriteInput } from "./favorites.js";
+import { ServiceIcon } from "./SourcePicker.js";
 
 interface LibraryViewProps {
   groups: SonosGroup[];
@@ -16,8 +18,9 @@ type OpenPlaylist = { playlist: Playlist; items: PlaylistItem[] };
 
 export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryViewProps) {
   const dialogs = useDialogs();
-  const [favorites, setFavorites] = useState<Favorite[]>([]);
+  const favs = useFavorites();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [sources, setSources] = useState<SourceDescriptor[]>([]);
   const [open, setOpen] = useState<OpenPlaylist | null>(null);
   const [newName, setNewName] = useState("");
   const [renamingId, setRenamingId] = useState<number | null>(null);
@@ -28,13 +31,47 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const groupOptions = buildGroupOptions(groups);
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupId) ?? groupOptions[0];
 
+  // Favorites come from the shared hook so preset changes here and in the player
+  // stay in sync; only playlists are local to this view.
   const refresh = useCallback(async () => {
-    const [favs, lists] = await Promise.all([bridgeApi.favorites(), bridgeApi.playlists()]);
-    setFavorites(favs);
-    setPlaylists(lists);
+    setPlaylists(await bridgeApi.playlists());
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void bridgeApi.listSources().then(setSources).catch(() => { /* non-fatal */ }); }, []);
+
+  const sourceName = useCallback(
+    (sourceId: string) => sources.find((source) => source.id === sourceId)?.name ?? sourceId,
+    [sources]
+  );
+
+  // Group favorites by provider; within a provider, radio (presettable) first, then by title.
+  const favoritesByProvider = useMemo(() => {
+    const groups = new Map<string, Favorite[]>();
+    for (const fav of favs.favorites) {
+      const list = groups.get(fav.sourceId) ?? [];
+      list.push(fav);
+      groups.set(fav.sourceId, list);
+    }
+    for (const list of groups.values()) {
+      list.sort((a, b) => Number(b.kind === "radio") - Number(a.kind === "radio") || a.title.localeCompare(b.title));
+    }
+    return [...groups.entries()].sort((a, b) => sourceName(a[0]).localeCompare(sourceName(b[0])));
+  }, [favs.favorites, sourceName]);
+
+  const favoriteToInput = (favorite: Favorite): FavoriteInput => ({
+    sourceId: favorite.sourceId, itemId: favorite.itemId, kind: favorite.kind, title: favorite.title,
+    subtitle: favorite.subtitle, artist: favorite.artist, album: favorite.album, albumArtUri: favorite.albumArtUri
+  });
+
+  const togglePreset = async (favorite: Favorite) => {
+    try {
+      const nowPreset = await favs.togglePreset(favoriteToInput(favorite));
+      setStatus({ ok: true, message: nowPreset ? `Added “${favorite.title}” to presets.` : `Removed “${favorite.title}” from presets.` });
+    } catch (err) {
+      setStatus({ ok: false, message: err instanceof Error ? err.message : "Could not update preset" });
+    }
+  };
 
   useEffect(() => {
     if (!status) return undefined;
@@ -70,8 +107,8 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   };
 
   const unfavorite = async (favorite: Favorite) => {
-    await bridgeApi.removeFavorite(favorite.sourceId, favorite.itemId);
-    setFavorites((current) => current.filter((entry) => entry.id !== favorite.id));
+    // toggle removes it (and any preset) since it's currently favorited, and keeps the shared state in sync.
+    await favs.toggle(favoriteToInput(favorite));
   };
 
   const createPlaylist = async () => {
@@ -219,25 +256,41 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
 
       <div className="library-section">
         <h3>Favorites</h3>
-        {favorites.length === 0 ? (
+        {favs.favorites.length === 0 ? (
           <div className="empty-panel">No favorites yet. Tap the ⋯ menu on a track or album to favorite it.</div>
         ) : (
-          <ul className="library-track-list">
-            {favorites.map((favorite) => (
-              <li key={favorite.id} className="library-track">
-                <div className="browse-track-meta">
-                  <span>{favorite.title}{favorite.kind === "album" ? " (album)" : ""}</span>
-                  {[favorite.artist, favorite.album, favorite.subtitle].filter(Boolean).length > 0
-                    ? <small>{[favorite.artist, favorite.album ?? favorite.subtitle].filter(Boolean).join(" · ")}</small> : null}
-                </div>
-                <div className="browse-actions">
-                  <button type="button" className="browse-action" title="Play now" aria-label="Play now" disabled={busy} onClick={() => void playFavorite(favorite, "replace")}><Play size={14} /></button>
-                  <button type="button" className="browse-action" title="Add to end" aria-label="Add to end" disabled={busy} onClick={() => void playFavorite(favorite, "end")}><ListEnd size={14} /></button>
-                  <button type="button" className="browse-action" title="Remove favorite" aria-label="Remove favorite" onClick={() => void unfavorite(favorite)}><Trash2 size={14} /></button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          favoritesByProvider.map(([sourceId, list]) => (
+            <div className="library-provider" key={sourceId}>
+              <div className="library-provider-heading">
+                <ServiceIcon sourceId={sourceId} />
+                <h4>{sourceName(sourceId)}</h4>
+              </div>
+              <ul className="library-track-list">
+                {list.map((favorite) => (
+                  <li key={favorite.id} className="library-track">
+                    {favorite.albumArtUri
+                      ? <img className="browse-thumb" src={favorite.albumArtUri} alt="" loading="lazy" />
+                      : <span className="browse-thumb browse-thumb-empty" aria-hidden="true">♪</span>}
+                    <div className="browse-track-meta">
+                      <span>{favorite.title}{favorite.kind === "album" ? " (album)" : favorite.kind === "radio" ? " (radio)" : ""}</span>
+                      {[favorite.artist, favorite.album, favorite.subtitle].filter(Boolean).length > 0
+                        ? <small>{[favorite.artist, favorite.album ?? favorite.subtitle].filter(Boolean).join(" · ")}</small> : null}
+                    </div>
+                    <div className="browse-actions">
+                      <button type="button" className="browse-action" title="Play now" aria-label="Play now" disabled={busy} onClick={() => void playFavorite(favorite, "replace")}><Play size={14} /></button>
+                      <button type="button" className="browse-action" title="Add to end" aria-label="Add to end" disabled={busy} onClick={() => void playFavorite(favorite, "end")}><ListEnd size={14} /></button>
+                      {favorite.kind === "radio" ? (
+                        <button type="button" className={`browse-action${favorite.preset ? " pinned" : ""}`} title={favorite.preset ? "Remove preset" : "Save as preset"} aria-label="Toggle preset" onClick={() => void togglePreset(favorite)}>
+                          <Star size={14} fill={favorite.preset ? "currentColor" : "none"} />
+                        </button>
+                      ) : null}
+                      <button type="button" className="browse-action" title="Remove favorite" aria-label="Remove favorite" onClick={() => void unfavorite(favorite)}><Trash2 size={14} /></button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
         )}
       </div>
 

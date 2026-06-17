@@ -156,6 +156,9 @@ only while editing code.
 - **Podcasts** work without a key (Apple Podcasts directory). Set
   `PODCASTINDEX_KEY` + `PODCASTINDEX_SECRET` (free from api.podcastindex.org) for
   richer Podcast Index search. Pinned shows persist in `podcasts.db`.
+- **TuneIn** internet radio works without a key (the RadioTime OPML directory).
+  Pinned stations persist in `tunein.db`. Optionally set `MISONOS_TUNEIN_PARTNER_ID`
+  + `MISONOS_TUNEIN_SERIAL` if you have TuneIn partner credentials.
 - **A missing Grateful DB** only breaks Grateful Dead browsing; the other sources
   and the bridge keep working.
 
@@ -170,3 +173,4 @@ only while editing code.
 | ytmusic  | 4321            | bridge + Sonos speakers (SMAPI)  |
 | lma      | 4322            | bridge (Live Music Archive)      |
 | podcasts | 4323            | bridge (RSS podcasts)            |
+| tunein   | 4324            | bridge (TuneIn internet radio)   |

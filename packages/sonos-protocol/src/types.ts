@@ -98,6 +98,7 @@ export interface NowPlaying {
   shuffle?: boolean;
   crossfade?: boolean;
   sleepTimerSeconds?: number; // remaining seconds, 0/undefined when off
+  isLive?: boolean; // current track is a live, non-seekable stream (internet radio)
   updatedAt: string;
 }
 
@@ -213,6 +214,10 @@ export interface SourceBrowseItem {
   album?: string;
   durationSeconds?: number;
   albumArtUri?: string;
+  // Explicit "live, non-seekable stream" marker (internet radio). Set by the
+  // source — never inferred from a missing duration, which normal tracks and
+  // podcast episodes can also omit.
+  isLive?: boolean;
 }
 
 export type PlaybackMode = "replace" | "next" | "end";
@@ -233,6 +238,7 @@ export interface SourceTrackInfo {
   albumArtUri?: string;
   url: string;
   mimeType?: string;
+  isLive?: boolean; // live, non-seekable stream (internet radio)
 }
 
 // Wire (DTO) shapes for the bridge's writable store. camelCase; distinct from the
@@ -262,7 +268,9 @@ export interface EqPreset {
   createdAt: string;
 }
 
-export type FavoriteKind = "track" | "album";
+// "radio" marks a live, non-seekable stream (e.g. TuneIn). Only radio favorites
+// are eligible to be promoted to a preset.
+export type FavoriteKind = "track" | "album" | "radio";
 
 export interface Favorite {
   id: number;
@@ -273,6 +281,10 @@ export interface Favorite {
   subtitle?: string | null;
   artist?: string | null;
   album?: string | null;
+  albumArtUri?: string | null;
+  // A preset is a favorite pinned for one-tap tuning. preset implies favorited;
+  // removing the favorite clears the preset. Only radio-kind favorites set this.
+  preset: boolean;
   createdAt: string;
 }
 

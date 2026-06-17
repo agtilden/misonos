@@ -1,14 +1,14 @@
-import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
+import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
 import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { useDialogs } from "./dialogs.js";
-import { useFavorites } from "./favorites.js";
+import { useFavorites, type FavoriteInput } from "./favorites.js";
 import { useLocalPlayer, type LocalTrack } from "./localPlayer.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions, type GroupOption } from "./groupPalette.js";
@@ -150,6 +150,20 @@ export function App() {
   const effectiveActiveIndex = localMode ? localPlayer.activeIndex : activeQueueIndex;
   const effectiveVolumeValue = localMode ? localPlayer.volume : (primaryVolume?.volume ?? 0);
   const effectiveMuted = localMode ? localPlayer.muted : (primaryVolume?.muted ?? false);
+  // A live stream (e.g. TuneIn radio) reports no duration and is a single endless
+  // "track": there's nothing to seek, skip, repeat, shuffle, crossfade, or queue.
+  // Collapse the now-playing UI to just play/pause, volume, sleep, and favorite.
+  // Live radio is flagged explicitly by the source (NowPlaying.isLive) — never
+  // inferred from a missing duration, which normal tracks/podcasts can omit too.
+  // Live streams only play on Sonos, so local-device playback is never "live".
+  const isLiveStream = !localMode && !!nowPlaying?.isLive;
+  // Presets are a radio thing — show the strip when on a station or idle, but not
+  // while a regular track/album (Grateful Dead, YouTube, a podcast) is playing.
+  const showPresets = favorites.presets.length > 0 && (!effectiveNowPlaying || isLiveStream);
+  const activeQueueItem = effectiveActiveIndex >= 0 ? effectiveQueue[effectiveActiveIndex] : undefined;
+  const activeItemFavorited = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isFavorited(activeQueueItem.sourceId, activeQueueItem.trackId));
+  const activeItemPreset = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isPreset(activeQueueItem.sourceId, activeQueueItem.trackId));
+  const activeItemPinnable = !!(selectedGroup && activeQueueItem?.sourceId && activeQueueItem?.trackId);
   const onPlayPause = () => { if (localMode) localPlayer.toggle(); else void runTransport(effectivePlaying ? "pause" : "play"); };
   const onPrevTrack = () => { if (localMode) localPlayer.prev(); else void runTransport("previous"); };
   const onNextTrack = () => { if (localMode) localPlayer.next(); else void runTransport("next"); };
@@ -449,16 +463,48 @@ export function App() {
   const queueItemFavorited = (item: QueueItem): boolean =>
     !!(item.sourceId && item.trackId) && favorites.isFavorited(item.sourceId, item.trackId);
 
-  const toggleQueueFavorite = async (item: QueueItem) => {
-    if (!item.sourceId || !item.trackId) return;
+  // A live stream is favorited as "radio" (the only kind eligible for presets).
+  const queueItemInput = (item: QueueItem, live = false): FavoriteInput | null =>
+    item.sourceId && item.trackId
+      ? {
+          sourceId: item.sourceId, itemId: item.trackId, kind: live ? "radio" : "track",
+          title: item.title, artist: item.artist ?? null, album: item.album ?? null, albumArtUri: item.albumArtUri ?? null
+        }
+      : null;
+
+  const toggleQueueFavorite = async (item: QueueItem, live = false) => {
+    const input = queueItemInput(item, live);
+    if (!input) return;
     try {
-      const nowFavorited = await favorites.toggle({
-        sourceId: item.sourceId, itemId: item.trackId, kind: "track",
-        title: item.title, artist: item.artist ?? null, album: item.album ?? null
-      });
+      const nowFavorited = await favorites.toggle(input);
       setMessage(nowFavorited ? `Favorited “${item.title}”.` : `Removed “${item.title}” from favorites.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not update favorite");
+    }
+  };
+
+  const toggleQueuePreset = async (item: QueueItem) => {
+    const input = queueItemInput(item, true);
+    if (!input) return;
+    try {
+      const nowPreset = await favorites.togglePreset(input);
+      setMessage(nowPreset ? `Added “${item.title}” to presets.` : `Removed “${item.title}” from presets.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not update preset");
+    }
+  };
+
+  // One-tap "tune in": a preset is a single radio track, so play it directly.
+  // Inherit the prior transport state — switching from a playing station keeps
+  // playing; from a paused/stopped one it loads without auto-starting.
+  const playPreset = async (preset: Favorite) => {
+    if (!selectedGroup) { setMessage("Pick a room first."); return; }
+    try {
+      const next = await bridgeApi.playSourceItems(preset.sourceId, { trackIds: [preset.itemId], groupId: selectedGroup.id, mode: "replace", autoplay: effectivePlaying });
+      setNowPlaying(next);
+      setMessage(effectivePlaying ? `Tuned in “${preset.title}”.` : `Loaded “${preset.title}”.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not tune in");
     }
   };
 
@@ -651,7 +697,7 @@ export function App() {
         </section>
       ) : view === "main" ? (
       <section className="controller-grid main-view">
-        <section className="now-playing" aria-label="Now playing">
+        <section className={`now-playing${isLiveStream ? " compact" : ""}`} aria-label="Now playing">
           <button
             type="button"
             className="artwork-frame"
@@ -664,33 +710,39 @@ export function App() {
             <p className="eyebrow">{localMode ? "ON THIS DEVICE" : effectiveNowPlaying?.state ?? "UNKNOWN"}</p>
             <h2>{effectiveNowPlaying?.title ?? "Nothing selected"}</h2>
             <p>{[effectiveNowPlaying?.artist, effectiveNowPlaying?.album].filter(Boolean).join(" - ")}</p>
-            <div className="progress-copy">
-              <span>{effectiveProgress.positionLabel}</span>
-              <button
-                type="button"
-                className="playback-progress"
-                role="meter"
-                aria-label="Playback progress (click to seek)"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(effectiveProgress.percent)}
-                disabled={!transportEnabled || !effectiveProgress.durationSeconds}
-                onClick={(event) => {
-                  if (!effectiveProgress.durationSeconds) return;
-                  const target = event.currentTarget.getBoundingClientRect();
-                  const ratio = Math.max(0, Math.min(1, (event.clientX - target.left) / target.width));
-                  onSeekTo(Math.round(ratio * effectiveProgress.durationSeconds));
-                }}
-              >
-                <span style={{ width: `${effectiveProgress.percent}%` }} />
-              </button>
-              <span>{effectiveProgress.durationLabel}</span>
-            </div>
+            {/* Live streams (e.g. TuneIn radio) report no duration and can't be
+                seeked, so the scrub bar would be meaningless — hide it entirely. */}
+            {effectiveProgress.durationSeconds > 0 && (
+              <div className="progress-copy">
+                <span>{effectiveProgress.positionLabel}</span>
+                <button
+                  type="button"
+                  className="playback-progress"
+                  role="meter"
+                  aria-label="Playback progress (click to seek)"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(effectiveProgress.percent)}
+                  disabled={!transportEnabled || !effectiveProgress.durationSeconds}
+                  onClick={(event) => {
+                    if (!effectiveProgress.durationSeconds) return;
+                    const target = event.currentTarget.getBoundingClientRect();
+                    const ratio = Math.max(0, Math.min(1, (event.clientX - target.left) / target.width));
+                    onSeekTo(Math.round(ratio * effectiveProgress.durationSeconds));
+                  }}
+                >
+                  <span style={{ width: `${effectiveProgress.percent}%` }} />
+                </button>
+                <span>{effectiveProgress.durationLabel}</span>
+              </div>
+            )}
           </div>
           <div className="transport-bar">
-            <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!transportEnabled} onClick={onPrevTrack}>
-              <SkipBack size={22} />
-            </button>
+            {!isLiveStream && (
+              <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!transportEnabled} onClick={onPrevTrack}>
+                <SkipBack size={22} />
+              </button>
+            )}
             <button
               className="icon-button large primary"
               type="button"
@@ -701,42 +753,71 @@ export function App() {
             >
               {effectivePlaying ? <Pause size={22} /> : <Play size={24} />}
             </button>
-            <button className="icon-button large" type="button" title="Next" aria-label="Next" disabled={!transportEnabled} onClick={onNextTrack}>
-              <SkipForward size={22} />
-            </button>
+            {!isLiveStream && (
+              <button className="icon-button large" type="button" title="Next" aria-label="Next" disabled={!transportEnabled} onClick={onNextTrack}>
+                <SkipForward size={22} />
+              </button>
+            )}
           </div>
           {!localMode ? (
           <div className="transport-modes">
-            <button
-              className={`icon-button mode${nowPlaying?.repeat && nowPlaying.repeat !== "none" ? " active" : ""}`}
-              type="button"
-              title={nowPlaying?.repeat === "one" ? "Repeat one" : nowPlaying?.repeat === "all" ? "Repeat all" : "Repeat off"}
-              aria-label="Cycle repeat mode"
-              disabled={!selectedGroup}
-              onClick={() => void cycleRepeat()}
-            >
-              {nowPlaying?.repeat === "one" ? <Repeat1 size={16} /> : <Repeat size={16} />}
-            </button>
-            <button
-              className={`icon-button mode${nowPlaying?.shuffle ? " active" : ""}`}
-              type="button"
-              title={nowPlaying?.shuffle ? "Shuffle on" : "Shuffle off"}
-              aria-label="Toggle shuffle"
-              disabled={!selectedGroup}
-              onClick={() => void toggleShuffle()}
-            >
-              <Shuffle size={16} />
-            </button>
-            <button
-              className={`icon-button mode${nowPlaying?.crossfade ? " active" : ""}`}
-              type="button"
-              title={nowPlaying?.crossfade ? "Crossfade on" : "Crossfade off"}
-              aria-label="Toggle crossfade"
-              disabled={!selectedGroup}
-              onClick={() => void toggleCrossfade()}
-            >
-              <Blend size={16} />
-            </button>
+            {isLiveStream ? (
+              <>
+                <button
+                  className={`icon-button mode${activeItemFavorited ? " active" : ""}`}
+                  type="button"
+                  title={activeItemFavorited ? "Remove favorite" : "Add favorite"}
+                  aria-label="Toggle favorite"
+                  disabled={!activeItemPinnable}
+                  onClick={() => activeQueueItem && void toggleQueueFavorite(activeQueueItem, true)}
+                >
+                  <Heart size={16} fill={activeItemFavorited ? "currentColor" : "none"} />
+                </button>
+                <button
+                  className={`icon-button mode${activeItemPreset ? " active" : ""}`}
+                  type="button"
+                  title={activeItemPreset ? "Remove preset" : "Save as preset"}
+                  aria-label="Toggle preset"
+                  disabled={!activeItemPinnable}
+                  onClick={() => activeQueueItem && void toggleQueuePreset(activeQueueItem)}
+                >
+                  <Star size={16} fill={activeItemPreset ? "currentColor" : "none"} />
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className={`icon-button mode${nowPlaying?.repeat && nowPlaying.repeat !== "none" ? " active" : ""}`}
+                  type="button"
+                  title={nowPlaying?.repeat === "one" ? "Repeat one" : nowPlaying?.repeat === "all" ? "Repeat all" : "Repeat off"}
+                  aria-label="Cycle repeat mode"
+                  disabled={!selectedGroup}
+                  onClick={() => void cycleRepeat()}
+                >
+                  {nowPlaying?.repeat === "one" ? <Repeat1 size={16} /> : <Repeat size={16} />}
+                </button>
+                <button
+                  className={`icon-button mode${nowPlaying?.shuffle ? " active" : ""}`}
+                  type="button"
+                  title={nowPlaying?.shuffle ? "Shuffle on" : "Shuffle off"}
+                  aria-label="Toggle shuffle"
+                  disabled={!selectedGroup}
+                  onClick={() => void toggleShuffle()}
+                >
+                  <Shuffle size={16} />
+                </button>
+                <button
+                  className={`icon-button mode${nowPlaying?.crossfade ? " active" : ""}`}
+                  type="button"
+                  title={nowPlaying?.crossfade ? "Crossfade on" : "Crossfade off"}
+                  aria-label="Toggle crossfade"
+                  disabled={!selectedGroup}
+                  onClick={() => void toggleCrossfade()}
+                >
+                  <Blend size={16} />
+                </button>
+              </>
+            )}
             <SleepTimer
               remainingSeconds={nowPlaying?.sleepTimerSeconds}
               disabled={!selectedGroup}
@@ -785,6 +866,34 @@ export function App() {
           </div>
         </section>
 
+        {showPresets && (
+          <section className="presets-panel" aria-label="Radio presets">
+            <div className="section-heading"><h2>Presets</h2></div>
+            <div className="presets-grid">
+              {favorites.presets.map((preset) => {
+                const playing = !!activeQueueItem?.sourceId && activeQueueItem.sourceId === preset.sourceId && activeQueueItem.trackId === preset.itemId;
+                return (
+                  <button
+                    key={`${preset.sourceId}:${preset.itemId}`}
+                    type="button"
+                    className={`preset-tile${playing ? " active" : ""}`}
+                    title={`Tune in ${preset.title}`}
+                    aria-label={`Tune in ${preset.title}`}
+                    disabled={!selectedGroup}
+                    onClick={() => void playPreset(preset)}
+                  >
+                    {preset.albumArtUri
+                      ? <img src={preset.albumArtUri} alt="" loading="lazy" />
+                      : <span className="preset-tile-fallback" aria-hidden="true">{preset.title.slice(0, 2)}</span>}
+                    <span className="preset-tile-label">{preset.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {!isLiveStream && (
         <section className="queue-panel" aria-label="Queue">
           <div className="section-heading">
             <h2>Queue</h2>
@@ -823,6 +932,7 @@ export function App() {
             />
           )}
         </section>
+        )}
       </section>
       ) : null}
       {artworkFullscreen && nowPlaying?.albumArtUri ? (
@@ -1106,10 +1216,13 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const toggleFavorite = useCallback(async (item: SourceBrowseItem) => {
     if (!sourceId) return;
     // Album rows can be containers (e.g. YouTube Music `album:…`) or kind "album".
-    const kind = item.kind === "album" || item.id.startsWith("album:") ? "album" : "track";
+    // The source flags live streams explicitly → favorite those as "radio".
+    const kind = item.kind === "album" || item.id.startsWith("album:")
+      ? "album"
+      : item.isLive ? "radio" : "track";
     try {
       const nowFavorited = await favorites.toggle({
-        sourceId, itemId: item.id, kind, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album
+        sourceId, itemId: item.id, kind, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album, albumArtUri: item.albumArtUri
       });
       setStatus({ ok: true, message: nowFavorited ? `Favorited “${item.title}”.` : `Removed “${item.title}” from favorites.` });
     } catch (err) {

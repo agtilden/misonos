@@ -30,8 +30,9 @@ export interface Store {
   deleteEqPreset(id: number): Promise<void>;
   // Favorites
   listFavorites(): Promise<Favorite[]>;
-  addFavorite(input: Omit<Favorite, "id" | "createdAt">): Promise<Favorite>;
+  addFavorite(input: Omit<Favorite, "id" | "createdAt" | "preset">): Promise<Favorite>;
   removeFavorite(sourceId: string, itemId: string): Promise<void>;
+  setFavoritePreset(sourceId: string, itemId: string, preset: boolean): Promise<boolean>;
   // Playlists
   listPlaylists(): Promise<Playlist[]>;
   createPlaylist(name: string): Promise<Playlist>;
@@ -172,7 +173,7 @@ export async function createStore(dbPath: string): Promise<Store> {
       return rows.map(toFavorite);
     },
 
-    async addFavorite(input: Omit<Favorite, "id" | "createdAt">): Promise<Favorite> {
+    async addFavorite(input: Omit<Favorite, "id" | "createdAt" | "preset">): Promise<Favorite> {
       const createdAt = new Date().toISOString();
       const values = {
         kind: input.kind,
@@ -182,19 +183,22 @@ export async function createStore(dbPath: string): Promise<Store> {
         subtitle: input.subtitle ?? null,
         artist: input.artist ?? null,
         album: input.album ?? null,
+        image: input.albumArtUri ?? null,
         created_at: createdAt
       };
       const row = await db
         .insertInto("favorite")
         .values(values)
         // Idempotent: re-favoriting the same (source, item) refreshes metadata, not a dupe.
+        // `preset` is intentionally left out so re-favoriting never clears a preset.
         .onConflict((oc) =>
           oc.columns(["source_id", "item_id"]).doUpdateSet({
             kind: input.kind,
             title: input.title,
             subtitle: input.subtitle ?? null,
             artist: input.artist ?? null,
-            album: input.album ?? null
+            album: input.album ?? null,
+            image: input.albumArtUri ?? null
           })
         )
         .returningAll()
@@ -203,7 +207,32 @@ export async function createStore(dbPath: string): Promise<Store> {
     },
 
     async removeFavorite(sourceId: string, itemId: string): Promise<void> {
+      // Deleting the row also drops any preset — presets can't outlive their favorite.
       await db.deleteFrom("favorite").where("source_id", "=", sourceId).where("item_id", "=", itemId).execute();
+    },
+
+    async setFavoritePreset(sourceId: string, itemId: string, preset: boolean): Promise<boolean> {
+      // Only radio favorites are preset-eligible. Promotion requires an existing
+      // radio favorite (callers favorite first); demotion is always allowed and
+      // idempotent. Returns false when a non-radio/missing favorite is promoted.
+      if (preset) {
+        const row = await db
+          .selectFrom("favorite")
+          .select("kind")
+          .where("source_id", "=", sourceId)
+          .where("item_id", "=", itemId)
+          .executeTakeFirst();
+        if (row?.kind !== "radio") return false;
+      }
+      await db
+        .updateTable("favorite")
+        .set({ preset: preset ? 1 : 0 })
+        .where("source_id", "=", sourceId)
+        .where("item_id", "=", itemId)
+        // Defence in depth: never flip preset on a non-radio row.
+        .where("kind", "=", "radio")
+        .execute();
+      return true;
     },
 
     async listPlaylists(): Promise<Playlist[]> {
@@ -376,17 +405,21 @@ function toFavorite(row: {
   subtitle: string | null;
   artist: string | null;
   album: string | null;
+  image: string | null;
+  preset: number;
   created_at: string;
 }): Favorite {
   return {
     id: row.id,
-    kind: row.kind === "album" ? "album" : "track",
+    kind: row.kind === "album" ? "album" : row.kind === "radio" ? "radio" : "track",
     sourceId: row.source_id,
     itemId: row.item_id,
     title: row.title,
     subtitle: row.subtitle,
     artist: row.artist,
     album: row.album,
+    albumArtUri: row.image,
+    preset: row.preset === 1,
     createdAt: row.created_at
   };
 }

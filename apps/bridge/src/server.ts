@@ -340,11 +340,11 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
     const sourcePlayMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/play$/);
     if (request.method === "POST" && sourcePlayMatch) {
       const sourceId = decodeURIComponent(sourcePlayMatch[1]);
-      const body = await readJson<{ trackIds: string[]; groupId: string; mode?: "replace" | "next" | "end" }>(request);
+      const body = await readJson<{ trackIds: string[]; groupId: string; mode?: "replace" | "next" | "end"; autoplay?: boolean }>(request);
       if (!Array.isArray(body.trackIds) || body.trackIds.length === 0) return json(response, { error: "trackIds[] is required" }, 400);
       if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
       const mode = body.mode ?? "replace";
-      const nowPlaying = await service.playSourceItems({ sourceId, trackIds: body.trackIds, groupId: body.groupId, mode });
+      const nowPlaying = await service.playSourceItems({ sourceId, trackIds: body.trackIds, groupId: body.groupId, mode, autoplay: body.autoplay });
       return json(response, nowPlaying);
     }
 
@@ -452,9 +452,9 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
     if (url.pathname === "/api/favorites") {
       if (request.method === "GET") return json(response, await store.listFavorites());
       if (request.method === "POST") {
-        const body = await readJson<Omit<Favorite, "id" | "createdAt">>(request);
+        const body = await readJson<Omit<Favorite, "id" | "createdAt" | "preset">>(request);
         if (!body.sourceId || !body.itemId || !body.title) return json(response, { error: "Missing sourceId, itemId or title" }, 400);
-        const kind = body.kind === "album" ? "album" : "track";
+        const kind = body.kind === "album" ? "album" : body.kind === "radio" ? "radio" : "track";
         return json(response, await store.addFavorite({ ...body, kind }), 201);
       }
     }
@@ -463,6 +463,16 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       const body = await readJson<{ sourceId: string; itemId: string }>(request);
       if (!body.sourceId || !body.itemId) return json(response, { error: "Missing sourceId or itemId" }, 400);
       await store.removeFavorite(body.sourceId, body.itemId);
+      return empty(response, 204);
+    }
+
+    // Promote/demote a favorite as a one-tap preset. The favorite must already
+    // exist (the web hook favorites first); this only flips the flag.
+    if (request.method === "POST" && url.pathname === "/api/favorites/preset") {
+      const body = await readJson<{ sourceId: string; itemId: string; preset: boolean }>(request);
+      if (!body.sourceId || !body.itemId) return json(response, { error: "Missing sourceId or itemId" }, 400);
+      const ok = await store.setFavoritePreset(body.sourceId, body.itemId, !!body.preset);
+      if (!ok) return json(response, { error: "Only an existing radio favorite can be a preset" }, 400);
       return empty(response, 204);
     }
 
