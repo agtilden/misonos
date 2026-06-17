@@ -59,8 +59,8 @@ services:
     depends_on: [bridge]
     environment:
       MISONOS_YTM_PORT: "4321"
-      # OAuth tokens are written here so YouTube Music stays signed in across restarts.
-      YTMUSIC_CREDENTIALS_PATH: "/data/ytmusic.json"
+      # Pasted YT Music cookies (Library/My Supermix) persist here across restarts.
+      YTMUSIC_COOKIES_PATH: "/data/ytmusic-cookies.json"
     volumes:
       - ./data:/data
 

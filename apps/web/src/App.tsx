@@ -2196,7 +2196,7 @@ function swGenLabel(value: string | undefined): string | undefined {
 }
 
 function YouTubeMusicAuth() {
-  type Status = { state: "signed-out" | "pending" | "signed-in"; verificationUrl?: string; userCode?: string; expiresAt?: number; cookieAuth?: "signed-in" | "signed-out" };
+  type Status = { cookieAuth?: "signed-in" | "signed-out" };
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -2209,8 +2209,7 @@ function YouTubeMusicAuth() {
     setBusy(true);
     setError("");
     try {
-      const next = await bridgeApi.sourceAuthSetCookies("youtube-music", paste);
-      setStatus((current) => ({ ...(current ?? { state: "signed-out" }), ...next }));
+      setStatus(await bridgeApi.sourceAuthSetCookies("youtube-music", paste));
       setPaste("");
       setShowPaste(false);
       window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
@@ -2225,8 +2224,7 @@ function YouTubeMusicAuth() {
     setBusy(true);
     setError("");
     try {
-      const next = await bridgeApi.sourceAuthClearCookies("youtube-music");
-      setStatus((current) => ({ ...(current ?? { state: "signed-out" }), ...next }));
+      setStatus(await bridgeApi.sourceAuthClearCookies("youtube-music"));
       window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't clear cookies");
@@ -2258,71 +2256,11 @@ function YouTubeMusicAuth() {
     return () => window.removeEventListener("misonos:source-auth-changed", onAuthChanged);
   }, [refresh]);
 
-  const [polling, setPolling] = useState(false);
-  useEffect(() => {
-    if (!polling && status?.state !== "pending") return undefined;
-    const interval = window.setInterval(refresh, 2500);
-    return () => window.clearInterval(interval);
-  }, [polling, status?.state, refresh]);
-
-  const prevState = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (status?.state === "signed-in") setPolling(false);
-    if (prevState.current && prevState.current !== status?.state) {
-      window.dispatchEvent(new CustomEvent("misonos:source-auth-changed", { detail: { sourceId: "youtube-music" } }));
-    }
-    prevState.current = status?.state;
-  }, [status?.state]);
-
-  const start = useCallback(async () => {
-    setBusy(true);
-    setError("");
-    setPolling(true);
-    try {
-      setStatus(await bridgeApi.sourceAuthStart("youtube-music"));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign-in failed");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  const signOut = useCallback(async () => {
-    setBusy(true);
-    setError("");
-    try {
-      setStatus(await bridgeApi.sourceAuthSignOut("youtube-music"));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign-out failed");
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
   return (
     <section className="settings-card">
       <h3>YouTube Music</h3>
-      <p className="settings-card-help">Optional. Signed-in mode unlocks Home, Charts, New Releases, Your Library, and higher-quality streams.</p>
+      <p className="settings-card-help">Anonymous search and browse work out of the box. Connect your Library &amp; My Supermix by pasting your YouTube&nbsp;Music cookies below.</p>
       {error ? <p className="settings-card-error">{error}</p> : null}
-      {status?.state === "signed-in" ? (
-        <div className="settings-card-row">
-          <span>Signed in.</span>
-          <button type="button" disabled={busy} onClick={() => void signOut()}>Sign out</button>
-        </div>
-      ) : status?.state === "pending" && status.verificationUrl && status.userCode ? (
-        <div className="settings-card-row settings-card-column">
-          <span>Open <a href={status.verificationUrl} target="_blank" rel="noreferrer">{status.verificationUrl}</a> and enter:</span>
-          <strong className="settings-card-code">{status.userCode}</strong>
-          <span className="settings-card-help">Status will update automatically when you finish.</span>
-        </div>
-      ) : (
-        <div className="settings-card-row">
-          <span>Not signed in. Anonymous search works without sign-in.</span>
-          <button type="button" disabled={busy} onClick={() => void start()}>Sign in with Google</button>
-        </div>
-      )}
-
-      <div className="settings-card-divider" />
       <h4 className="settings-card-subhead">Library &amp; Supermix (cookies)</h4>
       <p className="settings-card-help">
         Your Library and My Supermix need your YouTube&nbsp;Music cookies. On a computer, open{" "}

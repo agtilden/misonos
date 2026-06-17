@@ -91,18 +91,6 @@ export async function sourceAuthStatus(sourceId: string): Promise<unknown> {
   return fetchJson<unknown>(new URL("/auth/status", config.baseUrl));
 }
 
-export async function sourceAuthStart(sourceId: string): Promise<unknown> {
-  const config = requireConfig(sourceId);
-  // Cold-start can take 10-30s while youtubei.js downloads the player JS, so
-  // give this call a longer timeout than ordinary browse calls.
-  return fetchJson<unknown>(new URL("/auth/start", config.baseUrl), { method: "POST" }, 45000);
-}
-
-export async function sourceAuthSignOut(sourceId: string): Promise<unknown> {
-  const config = requireConfig(sourceId);
-  return fetchJson<unknown>(new URL("/auth/signout", config.baseUrl), { method: "POST" });
-}
-
 export async function sourceAuthSetCookies(sourceId: string, raw: string): Promise<unknown> {
   const config = requireConfig(sourceId);
   // The source reads the body as a raw cURL/header paste, not JSON.
