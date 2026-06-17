@@ -522,6 +522,27 @@ h2 {
   gap: 12px;
 }
 
+.custom-services-groups {
+  display: grid;
+  gap: 22px;
+}
+
+.custom-services-group-heading {
+  margin-bottom: 10px;
+}
+
+.custom-services-group-heading h3 {
+  margin: 0 0 2px;
+  font-size: 0.95rem;
+  color: #d7d2c4;
+}
+
+.custom-services-group-heading p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #9aa39f;
+}
+
 .custom-service-card {
   border: 1px solid rgba(242, 240, 232, 0.12);
   border-radius: 8px;

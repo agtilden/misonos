@@ -7,6 +7,17 @@ export interface CustomServicePreset {
   id: string;
   name: string;
   description: string;
+  // Sonos identifies a music service by this slot id. Each preset MUST use a
+  // distinct sid — registering two services on the same sid overwrites the first,
+  // which silently de-registers it (and breaks any x-sonos-http:…sid= URIs that
+  // depend on it). youtube-music stays 240 to match SMAPI_SOURCE_INFO and the
+  // sid baked into already-enqueued YT play URIs.
+  sid: number;
+  // true: MiSonos can only play this source once the service is registered on a
+  // speaker (it streams via x-sonos-http:…sid=, which Sonos resolves through the
+  // registered service). false: MiSonos already plays it via the stream proxy;
+  // registering only also surfaces it in the official Sonos app / other controllers.
+  registrationRequired: boolean;
   port: number;
   path?: string;
   authType: CustomServiceAuth;
@@ -19,27 +30,33 @@ export interface CustomServicePreset {
 
 export const CUSTOM_SERVICE_PRESETS: CustomServicePreset[] = [
   {
-    id: "grateful-dead-archive",
-    name: "Grateful Dead Archive",
-    description: "Live recordings from archive.org, served by the bundled grateful-smapi process.",
-    port: 4319,
-    authType: "Anonymous",
-    pollInterval: 30,
-    containerType: "MService"
-  },
-  {
     id: "youtube-music",
     name: "MiSonos YT Music",
     description: "Bridge for YouTube Music streams; unlocks full track metadata on Sonos S1.",
+    sid: 240,
+    registrationRequired: true,
     port: 4321,
     authType: "Anonymous",
     pollInterval: 3600,
     containerType: "MService"
   },
   {
+    id: "grateful-dead-archive",
+    name: "Grateful Dead Archive",
+    description: "Live recordings from archive.org, served by the bundled grateful-smapi process.",
+    sid: 241,
+    registrationRequired: false,
+    port: 4319,
+    authType: "Anonymous",
+    pollInterval: 30,
+    containerType: "MService"
+  },
+  {
     id: "live-music-archive",
     name: "Live Music Archive",
     description: "Thousands of taper-friendly bands from archive.org's etree collection, served by the bundled lma-smapi process.",
+    sid: 242,
+    registrationRequired: false,
     port: 4322,
     authType: "Anonymous",
     pollInterval: 3600,

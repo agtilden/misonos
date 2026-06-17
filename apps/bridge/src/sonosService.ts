@@ -881,7 +881,8 @@ export class SonosService {
     const host = options.hostOverride ?? detectLanIp();
     if (!options.uriOverride && !host) throw new Error("Could not detect LAN IP; provide uri override");
     const uri = options.uriOverride ?? buildServiceUri(preset, host as string);
-    return registerCustomService({ speakerIp: zone.ipAddress, preset, uri, secureUri: options.secureUri });
+    // Use the preset's own slot id so services don't clobber each other on sid 240.
+    return registerCustomService({ speakerIp: zone.ipAddress, preset, uri, secureUri: options.secureUri, sid: String(preset.sid) });
   }
 
   async listDevices(): Promise<SonosDeviceInfo[]> {

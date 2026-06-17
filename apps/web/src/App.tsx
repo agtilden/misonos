@@ -1672,6 +1672,68 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
     }
   }, [presets, zoneByPreset, hostByPreset, zones, load]);
 
+  const renderCard = (preset: NonNullable<typeof presets>[number]) => {
+    const isRegistered = registeredNames.has(preset.name.toLowerCase());
+    const result = results[preset.id];
+    const chosenZone = zoneByPreset[preset.id] ?? zones[0]?.id ?? "";
+    const hostOverride = hostByPreset[preset.id] ?? "";
+    const effectiveUri = hostOverride
+      ? `http://${hostOverride}:${preset.port}${preset.path ?? "/"}`
+      : preset.uri ?? "(no LAN IP detected — set host override)";
+    return (
+      <article key={preset.id} className="custom-service-card">
+        <header>
+          <div>
+            <h3>{preset.name}</h3>
+            <small>{preset.description}</small>
+          </div>
+          <span className={isRegistered ? "service-status registered" : "service-status pending"}>
+            {isRegistered ? "Registered" : "Not registered"}
+          </span>
+        </header>
+        <dl>
+          <dt>Endpoint</dt>
+          <dd><code style={{ wordBreak: "break-all" }}>{effectiveUri}</code></dd>
+          <dt>Auth</dt>
+          <dd>{preset.authType}</dd>
+          <dt>Poll</dt>
+          <dd>{preset.pollInterval}s</dd>
+        </dl>
+        <div className="custom-service-controls">
+          <label>
+            <span>Register on speaker</span>
+            <select value={chosenZone} onChange={(event) => setZoneByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}>
+              {zones.map((zone) => (
+                <option key={zone.id} value={zone.id}>{zone.name} ({zone.ipAddress})</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Host override (optional)</span>
+            <input
+              value={hostOverride}
+              onChange={(event) => setHostByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}
+              placeholder={preset.detectedHostIp ?? "192.168.x.x"}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void register(preset.id)}
+            disabled={busy !== null || zones.length === 0}
+          >
+            {busy === preset.id ? "Registering..." : isRegistered ? "Re-register" : "Register"}
+          </button>
+        </div>
+        {result ? (
+          <div className={result.ok ? "service-result ok" : "service-result error"}>{result.message}</div>
+        ) : null}
+      </article>
+    );
+  };
+
+  const requiredPresets = presets?.filter((preset) => preset.registrationRequired) ?? [];
+  const optionalPresets = presets?.filter((preset) => !preset.registrationRequired) ?? [];
+
   return (
     <section className="queue-panel" aria-label="Custom music services">
       <div className="section-heading">
@@ -1687,65 +1749,25 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
       ) : error ? (
         <div className="empty-panel error-panel"><span>{error}</span></div>
       ) : presets && presets.length > 0 ? (
-        <div className="custom-services">
-          {presets.map((preset) => {
-            const isRegistered = registeredNames.has(preset.name.toLowerCase());
-            const result = results[preset.id];
-            const chosenZone = zoneByPreset[preset.id] ?? zones[0]?.id ?? "";
-            const hostOverride = hostByPreset[preset.id] ?? "";
-            const effectiveUri = hostOverride
-              ? `http://${hostOverride}:${preset.port}${preset.path ?? "/"}`
-              : preset.uri ?? "(no LAN IP detected — set host override)";
-            return (
-              <article key={preset.id} className="custom-service-card">
-                <header>
-                  <div>
-                    <h3>{preset.name}</h3>
-                    <small>{preset.description}</small>
-                  </div>
-                  <span className={isRegistered ? "service-status registered" : "service-status pending"}>
-                    {isRegistered ? "Registered" : "Not registered"}
-                  </span>
-                </header>
-                <dl>
-                  <dt>Endpoint</dt>
-                  <dd><code style={{ wordBreak: "break-all" }}>{effectiveUri}</code></dd>
-                  <dt>Auth</dt>
-                  <dd>{preset.authType}</dd>
-                  <dt>Poll</dt>
-                  <dd>{preset.pollInterval}s</dd>
-                </dl>
-                <div className="custom-service-controls">
-                  <label>
-                    <span>Register on speaker</span>
-                    <select value={chosenZone} onChange={(event) => setZoneByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}>
-                      {zones.map((zone) => (
-                        <option key={zone.id} value={zone.id}>{zone.name} ({zone.ipAddress})</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Host override (optional)</span>
-                    <input
-                      value={hostOverride}
-                      onChange={(event) => setHostByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}
-                      placeholder={preset.detectedHostIp ?? "192.168.x.x"}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => void register(preset.id)}
-                    disabled={busy !== null || zones.length === 0}
-                  >
-                    {busy === preset.id ? "Registering..." : isRegistered ? "Re-register" : "Register"}
-                  </button>
-                </div>
-                {result ? (
-                  <div className={result.ok ? "service-result ok" : "service-result error"}>{result.message}</div>
-                ) : null}
-              </article>
-            );
-          })}
+        <div className="custom-services-groups">
+          {requiredPresets.length > 0 ? (
+            <div className="custom-services-group">
+              <div className="custom-services-group-heading">
+                <h3>Required to register</h3>
+                <p>MiSonos can’t play these until the service is registered on a speaker — playback runs through the registered Sonos service.</p>
+              </div>
+              <div className="custom-services">{requiredPresets.map(renderCard)}</div>
+            </div>
+          ) : null}
+          {optionalPresets.length > 0 ? (
+            <div className="custom-services-group">
+              <div className="custom-services-group-heading">
+                <h3>Optional</h3>
+                <p>MiSonos already plays these. Register only to also browse and play them in the official Sonos app and other controllers.</p>
+              </div>
+              <div className="custom-services">{optionalPresets.map(renderCard)}</div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="empty-panel">No presets defined.</div>

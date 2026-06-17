@@ -106,17 +106,31 @@ export async function getStreamUrl(videoId: string): Promise<YtmStreamInfo> {
   throw fromAnon.error ?? new Error("All stream clients failed");
 }
 
+// Innertube player clients that historically serve audio without a PO token,
+// ordered by what currently works (the gated TV_* clients sit at the back). YouTube
+// rotates which clients it gates, so we also remember the last client that produced
+// a playable URL and try it first — that keeps the common case to a single attempt
+// (~1s) instead of burning seconds failing over gated clients, which can stall
+// Sonos's stream start past its timeout.
+const STREAM_CLIENTS = ["ANDROID_VR", "IOS", "TV_EMBEDDED", "TV_SIMPLY", "ANDROID", "WEB_EMBEDDED"] as const;
+type StreamClient = (typeof STREAM_CLIENTS)[number];
+let lastGoodClient: StreamClient | undefined;
+
 async function resolveStream(yt: Innertube, videoId: string, label: string): Promise<{ url?: string; mimeType?: string; error?: Error }> {
-  const clientsToTry = ["TV_EMBEDDED", "TV_SIMPLY", "ANDROID_VR", "IOS", "ANDROID", "WEB_EMBEDDED"] as const;
+  // Sticky client first (if any), then the rest — deduped.
+  const order = [lastGoodClient, ...STREAM_CLIENTS].filter(
+    (client, index, all): client is StreamClient => !!client && all.indexOf(client) === index
+  );
   let lastError: Error | undefined;
-  for (const client of clientsToTry) {
+  for (const client of order) {
     try {
       const info = await yt.getInfo(videoId, { client });
       const format = info.chooseFormat({ type: "audio", quality: "best" });
       if (!format) continue;
       const decipheredUrl = await format.decipher(yt.session.player);
       if (await urlIsPlayable(decipheredUrl)) {
-        console.log(`[ytmusic] using client=${client} (${label})`);
+        if (lastGoodClient !== client) console.log(`[ytmusic] using client=${client} (${label})`);
+        lastGoodClient = client;
         return { url: decipheredUrl, mimeType: format.mime_type ?? "audio/mp4" };
       }
       console.log(`[ytmusic] client=${client} (${label}) returned URL that failed HEAD`);
@@ -125,12 +139,16 @@ async function resolveStream(yt: Innertube, videoId: string, label: string): Pro
       console.log(`[ytmusic] client=${client} (${label}) errored: ${lastError.message}`);
     }
   }
+  // The sticky client just failed end-to-end — clear it so the next call re-probes.
+  lastGoodClient = undefined;
   return { error: lastError };
 }
 
 async function urlIsPlayable(url: string): Promise<boolean> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
+  // Bound the worst case: a gated client whose URL hangs shouldn't add 5s to the
+  // time-to-first-byte that Sonos is waiting on.
+  const timer = setTimeout(() => controller.abort(), 3000);
   try {
     const response = await fetch(url, {
       method: "HEAD",

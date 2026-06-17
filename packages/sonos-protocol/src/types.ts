@@ -171,6 +171,11 @@ export interface CustomServicePresetView {
   id: string;
   name: string;
   description: string;
+  sid: number;
+  // true: MiSonos can only play this source once the service is registered on a
+  // speaker (it streams via x-sonos-http:…sid=). false: MiSonos plays it without
+  // registering; registering only also exposes it in the official Sonos app.
+  registrationRequired: boolean;
   port: number;
   path?: string;
   authType: "Anonymous" | "UserId" | "DeviceLink" | "AppLink";
