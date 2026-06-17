@@ -154,6 +154,9 @@ export function App() {
   // "track": there's nothing to seek, skip, repeat, shuffle, crossfade, or queue.
   // Collapse the now-playing UI to just play/pause, volume, sleep, and favorite.
   const isLiveStream = !!effectiveNowPlaying && effectiveProgress.durationSeconds === 0;
+  // Presets are a radio thing — show the strip when on a station or idle, but not
+  // while a regular track/album (Grateful Dead, YouTube, a podcast) is playing.
+  const showPresets = favorites.presets.length > 0 && (!effectiveNowPlaying || isLiveStream);
   const activeQueueItem = effectiveActiveIndex >= 0 ? effectiveQueue[effectiveActiveIndex] : undefined;
   const activeItemFavorited = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isFavorited(activeQueueItem.sourceId, activeQueueItem.trackId));
   const activeItemPreset = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isPreset(activeQueueItem.sourceId, activeQueueItem.trackId));
@@ -860,7 +863,7 @@ export function App() {
           </div>
         </section>
 
-        {favorites.presets.length > 0 && (
+        {showPresets && (
           <section className="presets-panel" aria-label="Radio presets">
             <div className="section-heading"><h2>Presets</h2></div>
             <div className="presets-grid">
