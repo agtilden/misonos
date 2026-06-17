@@ -150,6 +150,11 @@ export function App() {
   const effectiveActiveIndex = localMode ? localPlayer.activeIndex : activeQueueIndex;
   const effectiveVolumeValue = localMode ? localPlayer.volume : (primaryVolume?.volume ?? 0);
   const effectiveMuted = localMode ? localPlayer.muted : (primaryVolume?.muted ?? false);
+  // A live stream (e.g. TuneIn radio) reports no duration and is a single endless
+  // "track": there's nothing to seek, skip, repeat, shuffle, crossfade, or queue.
+  // Collapse the now-playing UI to just play/pause, volume, sleep, and favorite.
+  const isLiveStream = !!effectiveNowPlaying && effectiveProgress.durationSeconds === 0;
+  const activeQueueItem = effectiveActiveIndex >= 0 ? effectiveQueue[effectiveActiveIndex] : undefined;
   const onPlayPause = () => { if (localMode) localPlayer.toggle(); else void runTransport(effectivePlaying ? "pause" : "play"); };
   const onPrevTrack = () => { if (localMode) localPlayer.prev(); else void runTransport("previous"); };
   const onNextTrack = () => { if (localMode) localPlayer.next(); else void runTransport("next"); };
@@ -692,9 +697,11 @@ export function App() {
             )}
           </div>
           <div className="transport-bar">
-            <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!transportEnabled} onClick={onPrevTrack}>
-              <SkipBack size={22} />
-            </button>
+            {!isLiveStream && (
+              <button className="icon-button large" type="button" title="Previous" aria-label="Previous" disabled={!transportEnabled} onClick={onPrevTrack}>
+                <SkipBack size={22} />
+              </button>
+            )}
             <button
               className="icon-button large primary"
               type="button"
@@ -705,42 +712,59 @@ export function App() {
             >
               {effectivePlaying ? <Pause size={22} /> : <Play size={24} />}
             </button>
-            <button className="icon-button large" type="button" title="Next" aria-label="Next" disabled={!transportEnabled} onClick={onNextTrack}>
-              <SkipForward size={22} />
-            </button>
+            {!isLiveStream && (
+              <button className="icon-button large" type="button" title="Next" aria-label="Next" disabled={!transportEnabled} onClick={onNextTrack}>
+                <SkipForward size={22} />
+              </button>
+            )}
           </div>
           {!localMode ? (
           <div className="transport-modes">
-            <button
-              className={`icon-button mode${nowPlaying?.repeat && nowPlaying.repeat !== "none" ? " active" : ""}`}
-              type="button"
-              title={nowPlaying?.repeat === "one" ? "Repeat one" : nowPlaying?.repeat === "all" ? "Repeat all" : "Repeat off"}
-              aria-label="Cycle repeat mode"
-              disabled={!selectedGroup}
-              onClick={() => void cycleRepeat()}
-            >
-              {nowPlaying?.repeat === "one" ? <Repeat1 size={16} /> : <Repeat size={16} />}
-            </button>
-            <button
-              className={`icon-button mode${nowPlaying?.shuffle ? " active" : ""}`}
-              type="button"
-              title={nowPlaying?.shuffle ? "Shuffle on" : "Shuffle off"}
-              aria-label="Toggle shuffle"
-              disabled={!selectedGroup}
-              onClick={() => void toggleShuffle()}
-            >
-              <Shuffle size={16} />
-            </button>
-            <button
-              className={`icon-button mode${nowPlaying?.crossfade ? " active" : ""}`}
-              type="button"
-              title={nowPlaying?.crossfade ? "Crossfade on" : "Crossfade off"}
-              aria-label="Toggle crossfade"
-              disabled={!selectedGroup}
-              onClick={() => void toggleCrossfade()}
-            >
-              <Blend size={16} />
-            </button>
+            {isLiveStream ? (
+              <button
+                className={`icon-button mode${activeQueueItem && queueItemFavorited(activeQueueItem) ? " active" : ""}`}
+                type="button"
+                title={activeQueueItem && queueItemFavorited(activeQueueItem) ? "Remove favorite" : "Add favorite"}
+                aria-label="Toggle favorite"
+                disabled={!selectedGroup || !activeQueueItem?.sourceId || !activeQueueItem?.trackId}
+                onClick={() => activeQueueItem && void toggleQueueFavorite(activeQueueItem)}
+              >
+                <Heart size={16} fill={activeQueueItem && queueItemFavorited(activeQueueItem) ? "currentColor" : "none"} />
+              </button>
+            ) : (
+              <>
+                <button
+                  className={`icon-button mode${nowPlaying?.repeat && nowPlaying.repeat !== "none" ? " active" : ""}`}
+                  type="button"
+                  title={nowPlaying?.repeat === "one" ? "Repeat one" : nowPlaying?.repeat === "all" ? "Repeat all" : "Repeat off"}
+                  aria-label="Cycle repeat mode"
+                  disabled={!selectedGroup}
+                  onClick={() => void cycleRepeat()}
+                >
+                  {nowPlaying?.repeat === "one" ? <Repeat1 size={16} /> : <Repeat size={16} />}
+                </button>
+                <button
+                  className={`icon-button mode${nowPlaying?.shuffle ? " active" : ""}`}
+                  type="button"
+                  title={nowPlaying?.shuffle ? "Shuffle on" : "Shuffle off"}
+                  aria-label="Toggle shuffle"
+                  disabled={!selectedGroup}
+                  onClick={() => void toggleShuffle()}
+                >
+                  <Shuffle size={16} />
+                </button>
+                <button
+                  className={`icon-button mode${nowPlaying?.crossfade ? " active" : ""}`}
+                  type="button"
+                  title={nowPlaying?.crossfade ? "Crossfade on" : "Crossfade off"}
+                  aria-label="Toggle crossfade"
+                  disabled={!selectedGroup}
+                  onClick={() => void toggleCrossfade()}
+                >
+                  <Blend size={16} />
+                </button>
+              </>
+            )}
             <SleepTimer
               remainingSeconds={nowPlaying?.sleepTimerSeconds}
               disabled={!selectedGroup}
@@ -789,6 +813,7 @@ export function App() {
           </div>
         </section>
 
+        {!isLiveStream && (
         <section className="queue-panel" aria-label="Queue">
           <div className="section-heading">
             <h2>Queue</h2>
@@ -827,6 +852,7 @@ export function App() {
             />
           )}
         </section>
+        )}
       </section>
       ) : null}
       {artworkFullscreen && nowPlaying?.albumArtUri ? (

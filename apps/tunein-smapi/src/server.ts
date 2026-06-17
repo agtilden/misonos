@@ -91,10 +91,12 @@ async function trackInfo(config: TuneInConfig, rawId: string): Promise<SourceTra
   const stream = streams[0];
   if (!stream) throw new Error("Station has no playable stream");
   return {
+    // Live radio is a single endless "track": title is the station, the subtext
+    // (e.g. "New York Public Radio") is the only useful secondary line. Leaving
+    // artist/album empty avoids echoing the station name back as its own subtitle.
     id: rawId,
     title: id.name,
-    artist: id.subtext ?? id.name,
-    album: id.name,
+    artist: id.subtext,
     albumArtUri: id.image,
     url: stream.url,
     mimeType: mimeFor(stream.mediaType)
