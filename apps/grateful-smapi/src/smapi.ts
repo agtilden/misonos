@@ -225,6 +225,7 @@ function renderItem(item: BrowseItem): string {
       (item.artist ? `<artist>${escapeXml(item.artist)}</artist>` : "") +
       (item.album ? `<album>${escapeXml(item.album)}</album>` : "") +
       `<duration>${item.durationSeconds ?? 0}</duration>` +
+      (item.albumArtUri ? `<albumArtURI>${escapeXml(item.albumArtUri)}</albumArtURI>` : "") +
       `</trackMetadata>` +
       `</mediaMetadata>`;
   }
@@ -233,6 +234,7 @@ function renderItem(item: BrowseItem): string {
     `<itemType>${item.type}</itemType>` +
     `<title>${escapeXml(item.title)}</title>` +
     `<canPlay>${item.type === "album" ? "true" : "false"}</canPlay>` +
+    (item.albumArtUri ? `<albumArtURI>${escapeXml(item.albumArtUri)}</albumArtURI>` : "") +
     `</mediaCollection>`;
 }
 
@@ -246,6 +248,7 @@ function renderTrackMetadata(track: TrackRow): string {
     `<artist>Grateful Dead</artist>` +
     `<album>${escapeXml(concertLabel(track.date, track.venueTitle))}</album>` +
     `<duration>${trackDurationSeconds(track.duration)}</duration>` +
+    `<albumArtURI>${escapeXml(track.albumArt || archiveThumbUrl(track.recordingId))}</albumArtURI>` +
     `</trackMetadata>` +
     `</mediaMetadata>`;
 }
