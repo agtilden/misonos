@@ -149,7 +149,8 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       return listed(concerts.map((row) => ({
         id: encodeId({ kind: "concert", concertId: row.id }),
         title: concertLabel(row.date, row.venueTitle),
-        type: "container" as const
+        type: "container" as const,
+        albumArtUri: row.albumArt || undefined
       })));
     }
     case "venue": {
@@ -157,7 +158,8 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       return listed(concerts.map((row) => ({
         id: encodeId({ kind: "concert", concertId: row.id }),
         title: row.date,
-        type: "container" as const
+        type: "container" as const,
+        albumArtUri: row.albumArt || undefined
       })));
     }
     case "song": {
@@ -165,7 +167,8 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       return listed(concerts.map((row) => ({
         id: encodeId({ kind: "concert", concertId: row.id }),
         title: concertLabel(row.date, row.venueTitle),
-        type: "container" as const
+        type: "container" as const,
+        albumArtUri: row.albumArt || undefined
       })));
     }
     case "concert": {
@@ -175,7 +178,7 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
         title: recordingLabel(row.id),
         type: "album" as const,
         artist: "Grateful Dead",
-        albumArtUri: archiveThumbUrl(row.id)
+        albumArtUri: row.albumArt || archiveThumbUrl(row.id)
       })));
     }
     case "recording": {
@@ -189,7 +192,7 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
         artist: "Grateful Dead",
         durationSeconds: trackDurationSeconds(row.duration),
         mimeType: "audio/mpeg",
-        albumArtUri: archiveThumbUrl(row.recordingId)
+        albumArtUri: row.albumArt || archiveThumbUrl(row.recordingId)
       })));
     }
     case "track":

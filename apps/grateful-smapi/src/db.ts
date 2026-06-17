@@ -3,8 +3,8 @@ import Database from "better-sqlite3";
 export interface YearRow { year: string; count: number }
 export interface VenueRow { id: string; title: string; count: number }
 export interface SongRow { id: string; title: string }
-export interface ConcertRow { id: string; date: string; venueTitle: string }
-export interface RecordingRow { id: string; title: string }
+export interface ConcertRow { id: string; date: string; venueTitle: string; albumArt: string }
+export interface RecordingRow { id: string; title: string; albumArt: string }
 export interface TrackRow {
   recordingId: string;
   trackNumber: number;
@@ -15,6 +15,7 @@ export interface TrackRow {
   maindir: string;
   date: string;
   venueTitle: string;
+  albumArt: string;
 }
 
 export class GratefulDb {
@@ -51,16 +52,18 @@ export class GratefulDb {
 
   concertsByYear(year: string): ConcertRow[] {
     return this.db.prepare(
-      "SELECT c.id AS id, c.date AS date, COALESCE(v.title, '') AS venueTitle " +
+      "SELECT c.id AS id, c.date AS date, COALESCE(v.title, '') AS venueTitle, COALESCE(ci.url, '') AS albumArt " +
       "FROM concert c LEFT JOIN venue v ON v.id = c.venue_id " +
+      "LEFT JOIN concert_image ci ON ci.concert_id = c.id " +
       "WHERE substr(c.date, 1, 4) = ? ORDER BY c.date"
     ).all(year) as ConcertRow[];
   }
 
   concertsByVenue(venueId: string): ConcertRow[] {
     return this.db.prepare(
-      "SELECT c.id AS id, c.date AS date, COALESCE(v.title, '') AS venueTitle " +
+      "SELECT c.id AS id, c.date AS date, COALESCE(v.title, '') AS venueTitle, COALESCE(ci.url, '') AS albumArt " +
       "FROM concert c LEFT JOIN venue v ON v.id = c.venue_id " +
+      "LEFT JOIN concert_image ci ON ci.concert_id = c.id " +
       "WHERE c.venue_id = ? ORDER BY c.date"
     ).all(venueId) as ConcertRow[];
   }
@@ -70,19 +73,21 @@ export class GratefulDb {
     // (see https://github.com/agtilden/grateful-dead-db), so filter by it
     // directly via the idx_setlist_song index.
     return this.db.prepare(
-      "SELECT DISTINCT c.id AS id, c.date AS date, COALESCE(v.title, '') AS venueTitle " +
+      "SELECT DISTINCT c.id AS id, c.date AS date, COALESCE(v.title, '') AS venueTitle, COALESCE(ci.url, '') AS albumArt " +
       "FROM setlist s " +
       "JOIN recording r ON r.id = s.recording_id " +
       "JOIN concert c ON c.id = r.concert_id " +
       "LEFT JOIN venue v ON v.id = c.venue_id " +
+      "LEFT JOIN concert_image ci ON ci.concert_id = c.id " +
       "WHERE s.song_id = ? ORDER BY c.date"
     ).all(songId) as ConcertRow[];
   }
 
   recordingsByConcert(concertId: string): RecordingRow[] {
     return this.db.prepare(
-      "SELECT r.id AS id, COALESCE(rs.title, r.id) AS title " +
+      "SELECT r.id AS id, COALESCE(rs.title, r.id) AS title, COALESCE(ci.url, '') AS albumArt " +
       "FROM recording r LEFT JOIN recording_stream rs ON rs.recording_id = r.id " +
+      "LEFT JOIN concert_image ci ON ci.concert_id = r.concert_id " +
       "WHERE r.concert_id = ? ORDER BY r.id"
     ).all(concertId) as RecordingRow[];
   }
@@ -91,12 +96,13 @@ export class GratefulDb {
     return this.db.prepare(
       "SELECT s.tracknumber AS trackNumber, s.title AS title, s.duration AS duration, s.mp3 AS mp3, " +
       "       rs.server AS server, rs.maindir AS maindir, c.date AS date, COALESCE(v.title, '') AS venueTitle, " +
-      "       s.recording_id AS recordingId " +
+      "       s.recording_id AS recordingId, COALESCE(ci.url, '') AS albumArt " +
       "FROM setlist s " +
       "JOIN recording r ON r.id = s.recording_id " +
       "JOIN concert c ON c.id = r.concert_id " +
       "LEFT JOIN venue v ON v.id = c.venue_id " +
       "LEFT JOIN recording_stream rs ON rs.recording_id = r.id " +
+      "LEFT JOIN concert_image ci ON ci.concert_id = c.id " +
       "WHERE s.recording_id = ? ORDER BY s.tracknumber"
     ).all(recordingId) as TrackRow[];
   }
@@ -105,12 +111,13 @@ export class GratefulDb {
     return this.db.prepare(
       "SELECT s.tracknumber AS trackNumber, s.title AS title, s.duration AS duration, s.mp3 AS mp3, " +
       "       rs.server AS server, rs.maindir AS maindir, c.date AS date, COALESCE(v.title, '') AS venueTitle, " +
-      "       s.recording_id AS recordingId " +
+      "       s.recording_id AS recordingId, COALESCE(ci.url, '') AS albumArt " +
       "FROM setlist s " +
       "JOIN recording r ON r.id = s.recording_id " +
       "JOIN concert c ON c.id = r.concert_id " +
       "LEFT JOIN venue v ON v.id = c.venue_id " +
       "LEFT JOIN recording_stream rs ON rs.recording_id = r.id " +
+      "LEFT JOIN concert_image ci ON ci.concert_id = c.id " +
       "WHERE s.recording_id = ? AND s.tracknumber = ?"
     ).get(recordingId, trackNumber) as TrackRow | undefined;
   }
