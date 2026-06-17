@@ -153,7 +153,10 @@ export function App() {
   // A live stream (e.g. TuneIn radio) reports no duration and is a single endless
   // "track": there's nothing to seek, skip, repeat, shuffle, crossfade, or queue.
   // Collapse the now-playing UI to just play/pause, volume, sleep, and favorite.
-  const isLiveStream = !!effectiveNowPlaying && effectiveProgress.durationSeconds === 0;
+  // Live radio is flagged explicitly by the source (NowPlaying.isLive) — never
+  // inferred from a missing duration, which normal tracks/podcasts can omit too.
+  // Live streams only play on Sonos, so local-device playback is never "live".
+  const isLiveStream = !localMode && !!nowPlaying?.isLive;
   // Presets are a radio thing — show the strip when on a station or idle, but not
   // while a regular track/album (Grateful Dead, YouTube, a podcast) is playing.
   const showPresets = favorites.presets.length > 0 && (!effectiveNowPlaying || isLiveStream);
@@ -1213,10 +1216,10 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const toggleFavorite = useCallback(async (item: SourceBrowseItem) => {
     if (!sourceId) return;
     // Album rows can be containers (e.g. YouTube Music `album:…`) or kind "album".
-    // A playable row with no duration is a live stream → favorite it as "radio".
+    // The source flags live streams explicitly → favorite those as "radio".
     const kind = item.kind === "album" || item.id.startsWith("album:")
       ? "album"
-      : item.kind === "playable" && !item.durationSeconds ? "radio" : "track";
+      : item.isLive ? "radio" : "track";
     try {
       const nowFavorited = await favorites.toggle({
         sourceId, itemId: item.id, kind, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album, albumArtUri: item.albumArtUri

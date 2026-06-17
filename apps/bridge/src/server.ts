@@ -471,7 +471,8 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
     if (request.method === "POST" && url.pathname === "/api/favorites/preset") {
       const body = await readJson<{ sourceId: string; itemId: string; preset: boolean }>(request);
       if (!body.sourceId || !body.itemId) return json(response, { error: "Missing sourceId or itemId" }, 400);
-      await store.setFavoritePreset(body.sourceId, body.itemId, !!body.preset);
+      const ok = await store.setFavoritePreset(body.sourceId, body.itemId, !!body.preset);
+      if (!ok) return json(response, { error: "Only an existing radio favorite can be a preset" }, 400);
       return empty(response, 204);
     }
 

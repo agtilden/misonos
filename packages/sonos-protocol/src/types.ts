@@ -98,6 +98,7 @@ export interface NowPlaying {
   shuffle?: boolean;
   crossfade?: boolean;
   sleepTimerSeconds?: number; // remaining seconds, 0/undefined when off
+  isLive?: boolean; // current track is a live, non-seekable stream (internet radio)
   updatedAt: string;
 }
 
@@ -213,6 +214,10 @@ export interface SourceBrowseItem {
   album?: string;
   durationSeconds?: number;
   albumArtUri?: string;
+  // Explicit "live, non-seekable stream" marker (internet radio). Set by the
+  // source — never inferred from a missing duration, which normal tracks and
+  // podcast episodes can also omit.
+  isLive?: boolean;
 }
 
 export type PlaybackMode = "replace" | "next" | "end";
@@ -233,6 +238,7 @@ export interface SourceTrackInfo {
   albumArtUri?: string;
   url: string;
   mimeType?: string;
+  isLive?: boolean; // live, non-seekable stream (internet radio)
 }
 
 // Wire (DTO) shapes for the bridge's writable store. camelCase; distinct from the

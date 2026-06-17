@@ -220,6 +220,7 @@ export class SonosService {
         shuffle,
         crossfade: crossfade.CrossfadeMode === "1",
         sleepTimerSeconds: parseSonosDuration(sleep.RemainingSleepTimerDuration),
+        isLive: smapiMeta?.isLive,
         updatedAt: new Date().toISOString()
       };
     });

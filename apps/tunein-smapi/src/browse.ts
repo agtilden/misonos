@@ -63,6 +63,7 @@ function stationItem(outline: Pick<Outline, "guide_id" | "text" | "image" | "sub
     kind: "playable",
     subtitle: outline.subtext,
     artist: outline.subtext,
-    albumArtUri: outline.image
+    albumArtUri: outline.image,
+    isLive: true
   };
 }

@@ -32,7 +32,7 @@ export interface Store {
   listFavorites(): Promise<Favorite[]>;
   addFavorite(input: Omit<Favorite, "id" | "createdAt" | "preset">): Promise<Favorite>;
   removeFavorite(sourceId: string, itemId: string): Promise<void>;
-  setFavoritePreset(sourceId: string, itemId: string, preset: boolean): Promise<void>;
+  setFavoritePreset(sourceId: string, itemId: string, preset: boolean): Promise<boolean>;
   // Playlists
   listPlaylists(): Promise<Playlist[]>;
   createPlaylist(name: string): Promise<Playlist>;
@@ -211,15 +211,28 @@ export async function createStore(dbPath: string): Promise<Store> {
       await db.deleteFrom("favorite").where("source_id", "=", sourceId).where("item_id", "=", itemId).execute();
     },
 
-    async setFavoritePreset(sourceId: string, itemId: string, preset: boolean): Promise<void> {
-      // No-op if the (source, item) isn't favorited — a preset must back a favorite,
-      // so callers favorite first (the web hook does this before promoting).
+    async setFavoritePreset(sourceId: string, itemId: string, preset: boolean): Promise<boolean> {
+      // Only radio favorites are preset-eligible. Promotion requires an existing
+      // radio favorite (callers favorite first); demotion is always allowed and
+      // idempotent. Returns false when a non-radio/missing favorite is promoted.
+      if (preset) {
+        const row = await db
+          .selectFrom("favorite")
+          .select("kind")
+          .where("source_id", "=", sourceId)
+          .where("item_id", "=", itemId)
+          .executeTakeFirst();
+        if (row?.kind !== "radio") return false;
+      }
       await db
         .updateTable("favorite")
         .set({ preset: preset ? 1 : 0 })
         .where("source_id", "=", sourceId)
         .where("item_id", "=", itemId)
+        // Defence in depth: never flip preset on a non-radio row.
+        .where("kind", "=", "radio")
         .execute();
+      return true;
     },
 
     async listPlaylists(): Promise<Playlist[]> {

@@ -107,7 +107,7 @@ describe("bridge store", () => {
       await store.addFavorite({ kind: "radio", sourceId: "tunein", itemId: "s1", title: "WNYC", albumArtUri: "http://logo" });
       expect((await store.listFavorites())[0].preset).toBe(false);
 
-      await store.setFavoritePreset("tunein", "s1", true);
+      expect(await store.setFavoritePreset("tunein", "s1", true)).toBe(true);
       const promoted = (await store.listFavorites())[0];
       expect(promoted.preset).toBe(true);
       expect(promoted.albumArtUri).toBe("http://logo");
@@ -121,6 +121,20 @@ describe("bridge store", () => {
       // Removing the favorite drops the preset with it.
       await store.removeFavorite("tunein", "s1");
       expect(await store.listFavorites()).toHaveLength(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("refuses to make a non-radio favorite a preset", async () => {
+    const store = await createStore(":memory:");
+    try {
+      await store.addFavorite({ kind: "track", sourceId: "ytm", itemId: "v1", title: "A Song" });
+      expect(await store.setFavoritePreset("ytm", "v1", true)).toBe(false);
+      expect((await store.listFavorites())[0].preset).toBe(false);
+
+      // Promoting a favorite that doesn't exist is likewise rejected.
+      expect(await store.setFavoritePreset("ytm", "missing", true)).toBe(false);
     } finally {
       await store.close();
     }

@@ -99,7 +99,8 @@ async function trackInfo(config: TuneInConfig, rawId: string): Promise<SourceTra
     artist: id.subtext,
     albumArtUri: id.image,
     url: stream.url,
-    mimeType: mimeFor(stream.mediaType)
+    mimeType: mimeFor(stream.mediaType),
+    isLive: true
   };
 }
 
