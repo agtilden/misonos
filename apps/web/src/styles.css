@@ -298,7 +298,7 @@ button {
 
 .controller-grid.main-view {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "now" "queue";
+  grid-template-areas: "now" "presets" "queue";
 }
 
 .eyebrow {
@@ -1216,6 +1216,7 @@ h2 {
 .sidebar,
 .group-editor-panel,
 .now-playing,
+.presets-panel,
 .queue-panel {
   border: 1px solid rgba(242, 240, 232, 0.12);
   background: rgba(31, 35, 34, 0.86);
@@ -1239,6 +1240,93 @@ h2 {
 .queue-panel {
   grid-area: queue;
   padding: 14px;
+}
+
+.presets-panel {
+  grid-area: presets;
+  padding: 14px;
+}
+
+/* Compact now-playing for live radio: small art, tighter spacing, smaller title —
+   there's no scrub bar, skip, repeat, etc. so the widget shouldn't reserve the room. */
+.now-playing.compact {
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px;
+  align-items: center;
+}
+
+.now-playing.compact .track-copy h2 {
+  margin-bottom: 4px;
+  font-size: clamp(1.3rem, 3vw, 2rem);
+  -webkit-line-clamp: 2;
+}
+
+.now-playing.compact .transport-bar,
+.now-playing.compact .transport-modes {
+  margin-top: 2px;
+}
+
+.presets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 12px;
+}
+
+.preset-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(242, 240, 232, 0.12);
+  border-radius: 10px;
+  background: rgba(36, 40, 39, 0.6);
+  color: #d7d2c4;
+  cursor: pointer;
+}
+
+.preset-tile:hover:not(:disabled) {
+  border-color: rgba(145, 211, 196, 0.5);
+}
+
+.preset-tile.active {
+  border-color: #91d3c4;
+  background: rgba(145, 211, 196, 0.12);
+}
+
+.preset-tile:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.preset-tile img,
+.preset-tile-fallback {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #242827;
+}
+
+.preset-tile-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #91d3c4;
+}
+
+.preset-tile-label {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  text-align: center;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .group-editor-panel {
@@ -2480,6 +2568,29 @@ small {
 
 .library-group .topbar-group {
   min-width: 160px;
+}
+
+.library-provider + .library-provider {
+  margin-top: 14px;
+}
+
+.library-provider-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.library-provider-heading h4 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #9aa39f;
+}
+
+.library-provider-heading .service-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .library-track-list {

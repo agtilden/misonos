@@ -158,10 +158,12 @@ export const bridgeApi = {
   deleteEqPreset: (id: number) =>
     request<void>("/api/eq-presets/delete", { method: "POST", body: JSON.stringify({ id }) }),
   favorites: () => request<Favorite[]>("/api/favorites"),
-  addFavorite: (favorite: Omit<Favorite, "id" | "createdAt">) =>
+  addFavorite: (favorite: Omit<Favorite, "id" | "createdAt" | "preset">) =>
     request<Favorite>("/api/favorites", { method: "POST", body: JSON.stringify(favorite) }),
   removeFavorite: (sourceId: string, itemId: string) =>
     request<void>("/api/favorites/delete", { method: "POST", body: JSON.stringify({ sourceId, itemId }) }),
+  setFavoritePreset: (sourceId: string, itemId: string, preset: boolean) =>
+    request<void>("/api/favorites/preset", { method: "POST", body: JSON.stringify({ sourceId, itemId, preset }) }),
   playlists: () => request<Playlist[]>("/api/playlists"),
   playlist: (id: number) => request<{ playlist: Playlist; items: PlaylistItem[] }>(`/api/playlists/${id}`),
   createPlaylist: (name: string) =>

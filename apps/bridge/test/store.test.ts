@@ -101,6 +101,31 @@ describe("bridge store", () => {
     }
   });
 
+  it("promotes a radio favorite to a preset and preserves it across re-favoriting", async () => {
+    const store = await createStore(":memory:");
+    try {
+      await store.addFavorite({ kind: "radio", sourceId: "tunein", itemId: "s1", title: "WNYC", albumArtUri: "http://logo" });
+      expect((await store.listFavorites())[0].preset).toBe(false);
+
+      await store.setFavoritePreset("tunein", "s1", true);
+      const promoted = (await store.listFavorites())[0];
+      expect(promoted.preset).toBe(true);
+      expect(promoted.albumArtUri).toBe("http://logo");
+
+      // Re-favoriting refreshes metadata but must not clear the preset.
+      await store.addFavorite({ kind: "radio", sourceId: "tunein", itemId: "s1", title: "WNYC-FM" });
+      const after = (await store.listFavorites())[0];
+      expect(after.title).toBe("WNYC-FM");
+      expect(after.preset).toBe(true);
+
+      // Removing the favorite drops the preset with it.
+      await store.removeFavorite("tunein", "s1");
+      expect(await store.listFavorites()).toHaveLength(0);
+    } finally {
+      await store.close();
+    }
+  });
+
   it("creates a playlist, appends items, reports itemCount", async () => {
     const store = await createStore(":memory:");
     try {

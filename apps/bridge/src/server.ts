@@ -452,9 +452,9 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
     if (url.pathname === "/api/favorites") {
       if (request.method === "GET") return json(response, await store.listFavorites());
       if (request.method === "POST") {
-        const body = await readJson<Omit<Favorite, "id" | "createdAt">>(request);
+        const body = await readJson<Omit<Favorite, "id" | "createdAt" | "preset">>(request);
         if (!body.sourceId || !body.itemId || !body.title) return json(response, { error: "Missing sourceId, itemId or title" }, 400);
-        const kind = body.kind === "album" ? "album" : "track";
+        const kind = body.kind === "album" ? "album" : body.kind === "radio" ? "radio" : "track";
         return json(response, await store.addFavorite({ ...body, kind }), 201);
       }
     }
@@ -463,6 +463,15 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       const body = await readJson<{ sourceId: string; itemId: string }>(request);
       if (!body.sourceId || !body.itemId) return json(response, { error: "Missing sourceId or itemId" }, 400);
       await store.removeFavorite(body.sourceId, body.itemId);
+      return empty(response, 204);
+    }
+
+    // Promote/demote a favorite as a one-tap preset. The favorite must already
+    // exist (the web hook favorites first); this only flips the flag.
+    if (request.method === "POST" && url.pathname === "/api/favorites/preset") {
+      const body = await readJson<{ sourceId: string; itemId: string; preset: boolean }>(request);
+      if (!body.sourceId || !body.itemId) return json(response, { error: "Missing sourceId or itemId" }, 400);
+      await store.setFavoritePreset(body.sourceId, body.itemId, !!body.preset);
       return empty(response, 204);
     }
 

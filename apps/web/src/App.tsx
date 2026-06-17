@@ -1,14 +1,14 @@
-import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
+import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
 import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { useDialogs } from "./dialogs.js";
-import { useFavorites } from "./favorites.js";
+import { useFavorites, type FavoriteInput } from "./favorites.js";
 import { useLocalPlayer, type LocalTrack } from "./localPlayer.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions, type GroupOption } from "./groupPalette.js";
@@ -155,6 +155,9 @@ export function App() {
   // Collapse the now-playing UI to just play/pause, volume, sleep, and favorite.
   const isLiveStream = !!effectiveNowPlaying && effectiveProgress.durationSeconds === 0;
   const activeQueueItem = effectiveActiveIndex >= 0 ? effectiveQueue[effectiveActiveIndex] : undefined;
+  const activeItemFavorited = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isFavorited(activeQueueItem.sourceId, activeQueueItem.trackId));
+  const activeItemPreset = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isPreset(activeQueueItem.sourceId, activeQueueItem.trackId));
+  const activeItemPinnable = !!(selectedGroup && activeQueueItem?.sourceId && activeQueueItem?.trackId);
   const onPlayPause = () => { if (localMode) localPlayer.toggle(); else void runTransport(effectivePlaying ? "pause" : "play"); };
   const onPrevTrack = () => { if (localMode) localPlayer.prev(); else void runTransport("previous"); };
   const onNextTrack = () => { if (localMode) localPlayer.next(); else void runTransport("next"); };
@@ -454,16 +457,45 @@ export function App() {
   const queueItemFavorited = (item: QueueItem): boolean =>
     !!(item.sourceId && item.trackId) && favorites.isFavorited(item.sourceId, item.trackId);
 
-  const toggleQueueFavorite = async (item: QueueItem) => {
-    if (!item.sourceId || !item.trackId) return;
+  // A live stream is favorited as "radio" (the only kind eligible for presets).
+  const queueItemInput = (item: QueueItem, live = false): FavoriteInput | null =>
+    item.sourceId && item.trackId
+      ? {
+          sourceId: item.sourceId, itemId: item.trackId, kind: live ? "radio" : "track",
+          title: item.title, artist: item.artist ?? null, album: item.album ?? null, albumArtUri: item.albumArtUri ?? null
+        }
+      : null;
+
+  const toggleQueueFavorite = async (item: QueueItem, live = false) => {
+    const input = queueItemInput(item, live);
+    if (!input) return;
     try {
-      const nowFavorited = await favorites.toggle({
-        sourceId: item.sourceId, itemId: item.trackId, kind: "track",
-        title: item.title, artist: item.artist ?? null, album: item.album ?? null
-      });
+      const nowFavorited = await favorites.toggle(input);
       setMessage(nowFavorited ? `Favorited “${item.title}”.` : `Removed “${item.title}” from favorites.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not update favorite");
+    }
+  };
+
+  const toggleQueuePreset = async (item: QueueItem) => {
+    const input = queueItemInput(item, true);
+    if (!input) return;
+    try {
+      const nowPreset = await favorites.togglePreset(input);
+      setMessage(nowPreset ? `Added “${item.title}” to presets.` : `Removed “${item.title}” from presets.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not update preset");
+    }
+  };
+
+  // One-tap "tune in": a preset is a single radio track, so play it directly.
+  const playPreset = async (preset: Favorite) => {
+    if (!selectedGroup) { setMessage("Pick a room first."); return; }
+    try {
+      await bridgeApi.playSourceItems(preset.sourceId, { trackIds: [preset.itemId], groupId: selectedGroup.id, mode: "replace" });
+      setMessage(`Tuned in “${preset.title}”.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not tune in");
     }
   };
 
@@ -656,7 +688,7 @@ export function App() {
         </section>
       ) : view === "main" ? (
       <section className="controller-grid main-view">
-        <section className="now-playing" aria-label="Now playing">
+        <section className={`now-playing${isLiveStream ? " compact" : ""}`} aria-label="Now playing">
           <button
             type="button"
             className="artwork-frame"
@@ -721,16 +753,28 @@ export function App() {
           {!localMode ? (
           <div className="transport-modes">
             {isLiveStream ? (
-              <button
-                className={`icon-button mode${activeQueueItem && queueItemFavorited(activeQueueItem) ? " active" : ""}`}
-                type="button"
-                title={activeQueueItem && queueItemFavorited(activeQueueItem) ? "Remove favorite" : "Add favorite"}
-                aria-label="Toggle favorite"
-                disabled={!selectedGroup || !activeQueueItem?.sourceId || !activeQueueItem?.trackId}
-                onClick={() => activeQueueItem && void toggleQueueFavorite(activeQueueItem)}
-              >
-                <Heart size={16} fill={activeQueueItem && queueItemFavorited(activeQueueItem) ? "currentColor" : "none"} />
-              </button>
+              <>
+                <button
+                  className={`icon-button mode${activeItemFavorited ? " active" : ""}`}
+                  type="button"
+                  title={activeItemFavorited ? "Remove favorite" : "Add favorite"}
+                  aria-label="Toggle favorite"
+                  disabled={!activeItemPinnable}
+                  onClick={() => activeQueueItem && void toggleQueueFavorite(activeQueueItem, true)}
+                >
+                  <Heart size={16} fill={activeItemFavorited ? "currentColor" : "none"} />
+                </button>
+                <button
+                  className={`icon-button mode${activeItemPreset ? " active" : ""}`}
+                  type="button"
+                  title={activeItemPreset ? "Remove preset" : "Save as preset"}
+                  aria-label="Toggle preset"
+                  disabled={!activeItemPinnable}
+                  onClick={() => activeQueueItem && void toggleQueuePreset(activeQueueItem)}
+                >
+                  <Star size={16} fill={activeItemPreset ? "currentColor" : "none"} />
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -812,6 +856,33 @@ export function App() {
             ) : null}
           </div>
         </section>
+
+        {favorites.presets.length > 0 && (
+          <section className="presets-panel" aria-label="Radio presets">
+            <div className="section-heading"><h2>Presets</h2></div>
+            <div className="presets-grid">
+              {favorites.presets.map((preset) => {
+                const playing = !!activeQueueItem?.sourceId && activeQueueItem.sourceId === preset.sourceId && activeQueueItem.trackId === preset.itemId;
+                return (
+                  <button
+                    key={`${preset.sourceId}:${preset.itemId}`}
+                    type="button"
+                    className={`preset-tile${playing ? " active" : ""}`}
+                    title={`Tune in ${preset.title}`}
+                    aria-label={`Tune in ${preset.title}`}
+                    disabled={!selectedGroup}
+                    onClick={() => void playPreset(preset)}
+                  >
+                    {preset.albumArtUri
+                      ? <img src={preset.albumArtUri} alt="" loading="lazy" />
+                      : <span className="preset-tile-fallback" aria-hidden="true">{preset.title.slice(0, 2)}</span>}
+                    <span className="preset-tile-label">{preset.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {!isLiveStream && (
         <section className="queue-panel" aria-label="Queue">
@@ -1136,10 +1207,13 @@ function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: 
   const toggleFavorite = useCallback(async (item: SourceBrowseItem) => {
     if (!sourceId) return;
     // Album rows can be containers (e.g. YouTube Music `album:…`) or kind "album".
-    const kind = item.kind === "album" || item.id.startsWith("album:") ? "album" : "track";
+    // A playable row with no duration is a live stream → favorite it as "radio".
+    const kind = item.kind === "album" || item.id.startsWith("album:")
+      ? "album"
+      : item.kind === "playable" && !item.durationSeconds ? "radio" : "track";
     try {
       const nowFavorited = await favorites.toggle({
-        sourceId, itemId: item.id, kind, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album
+        sourceId, itemId: item.id, kind, title: item.title, subtitle: item.subtitle, artist: item.artist, album: item.album, albumArtUri: item.albumArtUri
       });
       setStatus({ ok: true, message: nowFavorited ? `Favorited “${item.title}”.` : `Removed “${item.title}” from favorites.` });
     } catch (err) {

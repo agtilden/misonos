@@ -262,7 +262,9 @@ export interface EqPreset {
   createdAt: string;
 }
 
-export type FavoriteKind = "track" | "album";
+// "radio" marks a live, non-seekable stream (e.g. TuneIn). Only radio favorites
+// are eligible to be promoted to a preset.
+export type FavoriteKind = "track" | "album" | "radio";
 
 export interface Favorite {
   id: number;
@@ -273,6 +275,10 @@ export interface Favorite {
   subtitle?: string | null;
   artist?: string | null;
   album?: string | null;
+  albumArtUri?: string | null;
+  // A preset is a favorite pinned for one-tap tuning. preset implies favorited;
+  // removing the favorite clears the preset. Only radio-kind favorites set this.
+  preset: boolean;
   createdAt: string;
 }
 
