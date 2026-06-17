@@ -7,6 +7,12 @@ export interface CustomServicePreset {
   id: string;
   name: string;
   description: string;
+  // Sonos identifies a music service by this slot id. Each preset MUST use a
+  // distinct sid — registering two services on the same sid overwrites the first,
+  // which silently de-registers it (and breaks any x-sonos-http:…sid= URIs that
+  // depend on it). youtube-music stays 240 to match SMAPI_SOURCE_INFO and the
+  // sid baked into already-enqueued YT play URIs.
+  sid: number;
   port: number;
   path?: string;
   authType: CustomServiceAuth;
@@ -22,6 +28,7 @@ export const CUSTOM_SERVICE_PRESETS: CustomServicePreset[] = [
     id: "grateful-dead-archive",
     name: "Grateful Dead Archive",
     description: "Live recordings from archive.org, served by the bundled grateful-smapi process.",
+    sid: 241,
     port: 4319,
     authType: "Anonymous",
     pollInterval: 30,
@@ -31,6 +38,7 @@ export const CUSTOM_SERVICE_PRESETS: CustomServicePreset[] = [
     id: "youtube-music",
     name: "MiSonos YT Music",
     description: "Bridge for YouTube Music streams; unlocks full track metadata on Sonos S1.",
+    sid: 240,
     port: 4321,
     authType: "Anonymous",
     pollInterval: 3600,
@@ -40,6 +48,7 @@ export const CUSTOM_SERVICE_PRESETS: CustomServicePreset[] = [
     id: "live-music-archive",
     name: "Live Music Archive",
     description: "Thousands of taper-friendly bands from archive.org's etree collection, served by the bundled lma-smapi process.",
+    sid: 242,
     port: 4322,
     authType: "Anonymous",
     pollInterval: 3600,
