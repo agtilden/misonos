@@ -1,4 +1,4 @@
-import { GratefulDb, trackUrl, trackDurationSeconds, type TrackRow } from "./db.js";
+import { GratefulDb, trackUrl, trackDurationSeconds, recordingLabel, type TrackRow } from "./db.js";
 import { decodeId, encodeId, type GratefulId } from "./ids.js";
 import { escapeXml, extractTagInt, extractTagText, soapResponse, soapFault } from "./soap.js";
 
@@ -104,6 +104,11 @@ export interface BrowseItem {
 }
 
 export function archiveThumbUrl(itemId: string): string {
+  // The item's own thumbnail file, served directly. We deliberately avoid
+  // services/img/<id>, which more readily falls back to archive.org's generic
+  // placeholder (so distinct recordings collapse to one identical tile). For
+  // these GD items the tile is an audio waveform — there's no real cover art —
+  // so this only weakly distinguishes recordings; the source label does that.
   return `https://archive.org/download/${encodeURIComponent(itemId)}/__ia_thumb.jpg`;
 }
 
@@ -144,7 +149,8 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       return listed(concerts.map((row) => ({
         id: encodeId({ kind: "concert", concertId: row.id }),
         title: concertLabel(row.date, row.venueTitle),
-        type: "container" as const
+        type: "container" as const,
+        albumArtUri: row.albumArt || undefined
       })));
     }
     case "venue": {
@@ -152,7 +158,8 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       return listed(concerts.map((row) => ({
         id: encodeId({ kind: "concert", concertId: row.id }),
         title: row.date,
-        type: "container" as const
+        type: "container" as const,
+        albumArtUri: row.albumArt || undefined
       })));
     }
     case "song": {
@@ -160,17 +167,18 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
       return listed(concerts.map((row) => ({
         id: encodeId({ kind: "concert", concertId: row.id }),
         title: concertLabel(row.date, row.venueTitle),
-        type: "container" as const
+        type: "container" as const,
+        albumArtUri: row.albumArt || undefined
       })));
     }
     case "concert": {
       const recordings = ctx.db.recordingsByConcert(id.concertId);
       return listed(recordings.map((row) => ({
         id: encodeId({ kind: "recording", recordingId: row.id }),
-        title: row.title,
+        title: recordingLabel(row.id),
         type: "album" as const,
         artist: "Grateful Dead",
-        albumArtUri: archiveThumbUrl(row.id)
+        albumArtUri: row.albumArt || archiveThumbUrl(row.id)
       })));
     }
     case "recording": {
@@ -184,7 +192,7 @@ export function browse(id: GratefulId, ctx: SmapiContext): { total: number; item
         artist: "Grateful Dead",
         durationSeconds: trackDurationSeconds(row.duration),
         mimeType: "audio/mpeg",
-        albumArtUri: archiveThumbUrl(row.recordingId)
+        albumArtUri: row.albumArt || archiveThumbUrl(row.recordingId)
       })));
     }
     case "track":
@@ -217,6 +225,7 @@ function renderItem(item: BrowseItem): string {
       (item.artist ? `<artist>${escapeXml(item.artist)}</artist>` : "") +
       (item.album ? `<album>${escapeXml(item.album)}</album>` : "") +
       `<duration>${item.durationSeconds ?? 0}</duration>` +
+      (item.albumArtUri ? `<albumArtURI>${escapeXml(item.albumArtUri)}</albumArtURI>` : "") +
       `</trackMetadata>` +
       `</mediaMetadata>`;
   }
@@ -225,6 +234,7 @@ function renderItem(item: BrowseItem): string {
     `<itemType>${item.type}</itemType>` +
     `<title>${escapeXml(item.title)}</title>` +
     `<canPlay>${item.type === "album" ? "true" : "false"}</canPlay>` +
+    (item.albumArtUri ? `<albumArtURI>${escapeXml(item.albumArtUri)}</albumArtURI>` : "") +
     `</mediaCollection>`;
 }
 
@@ -238,6 +248,7 @@ function renderTrackMetadata(track: TrackRow): string {
     `<artist>Grateful Dead</artist>` +
     `<album>${escapeXml(concertLabel(track.date, track.venueTitle))}</album>` +
     `<duration>${trackDurationSeconds(track.duration)}</duration>` +
+    `<albumArtURI>${escapeXml(track.albumArt || archiveThumbUrl(track.recordingId))}</albumArtURI>` +
     `</trackMetadata>` +
     `</mediaMetadata>`;
 }

@@ -59,7 +59,7 @@ export function createServer(config: SmapiConfig): http.Server {
             durationSeconds: trackDurationSeconds(track.duration),
             url: playUrl,
             mimeType: "audio/mpeg",
-            albumArtUri: archiveThumbUrl(track.recordingId)
+            albumArtUri: track.albumArt || archiveThumbUrl(track.recordingId)
           });
         } catch (error) {
           return sendJson(response, 400, { error: error instanceof Error ? error.message : "Bad id" });
