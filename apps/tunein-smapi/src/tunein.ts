@@ -98,7 +98,7 @@ export async function tune(config: TuneInConfig, guideId: string): Promise<TuneS
     if (typeof url !== "string" || !url) continue;
     const rec = entry as Record<string, unknown>;
     streams.push({
-      url,
+      url: stripAdParams(url),
       mediaType: typeof rec.media_type === "string" ? rec.media_type : undefined,
       bitrate: typeof rec.bitrate === "number" ? rec.bitrate : Number(rec.bitrate) || undefined,
       reliability: typeof rec.reliability === "number" ? rec.reliability : Number(rec.reliability) || undefined,
@@ -110,4 +110,28 @@ export async function tune(config: TuneInConfig, guideId: string): Promise<TuneS
     return (b.reliability ?? 0) - (a.reliability ?? 0) || (b.bitrate ?? 0) - (a.bitrate ?? 0);
   });
   return streams;
+}
+
+// TuneIn bakes AdsWizz ad-session params (aw_0_1st.skey, ad-partner ids, ...) into
+// the resolved stream URL. They tie the stream to a one-time ad session, so each
+// reconnect — Sonos re-requests as it buffers, and the bridge re-fetches the cached
+// URL — restarts that session and replays a pre-roll ad: programming plays for a
+// few seconds, then ads, on a loop. Dropping the aw_* params leaves the
+// broadcaster's plain mount, which simply resumes on reconnect. All other params
+// (including any genuine auth tokens on other stations) are preserved.
+export function stripAdParams(rawUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return rawUrl;
+  }
+  let changed = false;
+  for (const key of [...url.searchParams.keys()]) {
+    if (key.toLowerCase().startsWith("aw_")) {
+      url.searchParams.delete(key);
+      changed = true;
+    }
+  }
+  return changed ? url.toString() : rawUrl;
 }
