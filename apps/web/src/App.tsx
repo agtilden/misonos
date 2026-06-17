@@ -489,11 +489,14 @@ export function App() {
   };
 
   // One-tap "tune in": a preset is a single radio track, so play it directly.
+  // Inherit the prior transport state — switching from a playing station keeps
+  // playing; from a paused/stopped one it loads without auto-starting.
   const playPreset = async (preset: Favorite) => {
     if (!selectedGroup) { setMessage("Pick a room first."); return; }
     try {
-      await bridgeApi.playSourceItems(preset.sourceId, { trackIds: [preset.itemId], groupId: selectedGroup.id, mode: "replace" });
-      setMessage(`Tuned in “${preset.title}”.`);
+      const next = await bridgeApi.playSourceItems(preset.sourceId, { trackIds: [preset.itemId], groupId: selectedGroup.id, mode: "replace", autoplay: effectivePlaying });
+      setNowPlaying(next);
+      setMessage(effectivePlaying ? `Tuned in “${preset.title}”.` : `Loaded “${preset.title}”.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not tune in");
     }

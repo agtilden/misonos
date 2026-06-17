@@ -129,7 +129,7 @@ export const bridgeApi = {
     request<{ ids: string[] }>(`/api/sources/${encodeURIComponent(sourceId)}/subscriptions`),
   pinSource: (sourceId: string, id: string, pinned: boolean) =>
     request<{ pinned: boolean }>(`/api/sources/${encodeURIComponent(sourceId)}/pin`, { method: "POST", body: JSON.stringify({ id, pinned }) }),
-  playSourceItems: (sourceId: string, body: { trackIds: string[]; groupId: string; mode: PlaybackMode }) =>
+  playSourceItems: (sourceId: string, body: { trackIds: string[]; groupId: string; mode: PlaybackMode; autoplay?: boolean }) =>
     request<NowPlaying>(`/api/sources/${encodeURIComponent(sourceId)}/play`, { method: "POST", body: JSON.stringify(body) }),
   customServicePresets: () => request<CustomServicePresetView[]>("/api/music/custom-presets"),
   registerCustomService: (body: { presetId: string; zoneId: string; hostOverride?: string; uriOverride?: string; secureUri?: string }) =>

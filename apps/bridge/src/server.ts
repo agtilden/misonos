@@ -340,11 +340,11 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
     const sourcePlayMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/play$/);
     if (request.method === "POST" && sourcePlayMatch) {
       const sourceId = decodeURIComponent(sourcePlayMatch[1]);
-      const body = await readJson<{ trackIds: string[]; groupId: string; mode?: "replace" | "next" | "end" }>(request);
+      const body = await readJson<{ trackIds: string[]; groupId: string; mode?: "replace" | "next" | "end"; autoplay?: boolean }>(request);
       if (!Array.isArray(body.trackIds) || body.trackIds.length === 0) return json(response, { error: "trackIds[] is required" }, 400);
       if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
       const mode = body.mode ?? "replace";
-      const nowPlaying = await service.playSourceItems({ sourceId, trackIds: body.trackIds, groupId: body.groupId, mode });
+      const nowPlaying = await service.playSourceItems({ sourceId, trackIds: body.trackIds, groupId: body.groupId, mode, autoplay: body.autoplay });
       return json(response, nowPlaying);
     }
 

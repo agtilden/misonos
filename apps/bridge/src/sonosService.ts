@@ -718,13 +718,14 @@ export class SonosService {
     };
   }
 
-  async playSourceItems(options: { sourceId: string; trackIds: string[]; groupId: string; mode: PlaybackMode }): Promise<NowPlaying> {
+  async playSourceItems(options: { sourceId: string; trackIds: string[]; groupId: string; mode: PlaybackMode; autoplay?: boolean }): Promise<NowPlaying> {
     if (options.trackIds.length === 0) throw new Error("trackIds must be non-empty");
     // Single-source adapter over the mixed-source enqueue path (behavior identical).
     return this.enqueueTrackRefs(
       options.trackIds.map((trackId) => ({ sourceId: options.sourceId, trackId })),
       options.groupId,
-      options.mode
+      options.mode,
+      options.autoplay
     );
   }
 
@@ -734,7 +735,7 @@ export class SonosService {
     return this.enqueueTrackRefs(refs, groupId, mode);
   }
 
-  private async enqueueTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode): Promise<NowPlaying> {
+  private async enqueueTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode, autoplay = true): Promise<NowPlaying> {
     if (refs.length === 0) throw new Error("trackIds must be non-empty");
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
@@ -786,7 +787,9 @@ export class SonosService {
         CurrentURIMetaData: ""
       });
       await callSoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: "1" });
-      await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
+      // Skip Play when the caller wants to inherit the prior transport state —
+      // e.g. switching radio presets while paused shouldn't start playback.
+      if (autoplay) await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
     } else if (mode === "next") {
       // EnqueueAsNext=1 alone isn't reliable on Sonos S1 — it can append. Read
       // the current track number and insert explicitly at currentTrack+1.
