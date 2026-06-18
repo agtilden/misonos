@@ -182,12 +182,42 @@ const m005_recent_queues: Migration = {
   }
 };
 
+// Recently played: a deduped, capped history of tracks/stations actually played,
+// recorded from now-playing transport events, for quick replay from the Library.
+const m006_recently_played: Migration = {
+  async up(db: Kysely<unknown>): Promise<void> {
+    await db.schema
+      .createTable("recently_played")
+      .addColumn("id", "integer", (c) => c.primaryKey().autoIncrement())
+      .addColumn("source_id", "text", (c) => c.notNull())
+      .addColumn("track_id", "text", (c) => c.notNull())
+      .addColumn("kind", "text", (c) => c.notNull())
+      .addColumn("title", "text", (c) => c.notNull())
+      .addColumn("artist", "text")
+      .addColumn("album", "text")
+      .addColumn("image", "text")
+      .addColumn("played_at", "text", (c) => c.notNull())
+      .execute();
+    // Unique on (source, track) backs the delete-then-insert "move to top" upsert.
+    await db.schema
+      .createIndex("recently_played_unique")
+      .on("recently_played")
+      .columns(["source_id", "track_id"])
+      .unique()
+      .execute();
+  },
+  async down(db: Kysely<unknown>): Promise<void> {
+    await db.schema.dropTable("recently_played").execute();
+  }
+};
+
 const migrations: Record<string, Migration> = {
   "001_init": m001_init,
   "002_library": m002_library,
   "003_favorite_presets": m003_favorite_presets,
   "004_playlist_resume": m004_playlist_resume,
-  "005_recent_queues": m005_recent_queues
+  "005_recent_queues": m005_recent_queues,
+  "006_recently_played": m006_recently_played
 };
 
 export const migrationProvider: MigrationProvider = {

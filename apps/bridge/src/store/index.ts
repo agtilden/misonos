@@ -3,12 +3,14 @@ import { dirname } from "node:path";
 import SqliteDatabase from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 import { Migrator } from "kysely/migration";
-import type { EqPreset, Favorite, Playlist, PlaylistItem, Preference, RecentlyViewedItem, RecentQueue, SourceItemKind } from "@misonos/sonos-protocol";
+import type { EqPreset, Favorite, Playlist, PlaylistItem, Preference, RecentlyPlayedItem, RecentlyViewedItem, RecentQueue, SourceItemKind } from "@misonos/sonos-protocol";
 import { migrationProvider } from "./migrations.js";
 import type { Database } from "./schema.js";
 
 const RECENTLY_VIEWED_CAP = 50;
 const DEFAULT_RECENTLY_VIEWED_LIMIT = 50;
+const RECENTLY_PLAYED_CAP = 30;
+const DEFAULT_RECENTLY_PLAYED_LIMIT = 30;
 const RECENT_QUEUE_CAP = 3; // distinct recent queues kept per coordinator
 
 /** A flat track row destined for a playlist (albums are expanded into these upstream). */
@@ -40,6 +42,8 @@ export interface Store {
   setPreference(key: string, value: unknown): Promise<Preference>;
   listRecentlyViewed(sourceId?: string, limit?: number): Promise<RecentlyViewedItem[]>;
   recordRecentlyViewed(input: Omit<RecentlyViewedItem, "viewedAt">): Promise<void>;
+  listRecentlyPlayed(limit?: number): Promise<RecentlyPlayedItem[]>;
+  recordRecentlyPlayed(input: Omit<RecentlyPlayedItem, "playedAt">): Promise<void>;
   listEqPresets(): Promise<EqPreset[]>;
   createEqPreset(input: Omit<EqPreset, "id" | "createdAt">): Promise<EqPreset>;
   deleteEqPreset(id: number): Promise<void>;
@@ -160,6 +164,43 @@ export async function createStore(dbPath: string): Promise<Store> {
           .deleteFrom("recently_viewed")
           .where("id", "not in", (eb) =>
             eb.selectFrom("recently_viewed").select("id").orderBy("id", "desc").limit(RECENTLY_VIEWED_CAP)
+          )
+          .execute();
+      });
+    },
+
+    async listRecentlyPlayed(limit: number = DEFAULT_RECENTLY_PLAYED_LIMIT): Promise<RecentlyPlayedItem[]> {
+      const rows = await db.selectFrom("recently_played").selectAll().orderBy("id", "desc").limit(limit).execute();
+      return rows.map(toRecentlyPlayed);
+    },
+
+    async recordRecentlyPlayed(input: Omit<RecentlyPlayedItem, "playedAt">): Promise<void> {
+      const playedAt = new Date().toISOString();
+      await db.transaction().execute(async (tx) => {
+        // Move-to-top: drop any existing row for this (source, track) then re-insert.
+        await tx
+          .deleteFrom("recently_played")
+          .where("source_id", "=", input.sourceId)
+          .where("track_id", "=", input.trackId)
+          .execute();
+        await tx
+          .insertInto("recently_played")
+          .values({
+            source_id: input.sourceId,
+            track_id: input.trackId,
+            kind: input.kind,
+            title: input.title,
+            artist: input.artist ?? null,
+            album: input.album ?? null,
+            image: input.albumArtUri ?? null,
+            played_at: playedAt
+          })
+          .execute();
+        // Cap: keep only the newest N rows globally.
+        await tx
+          .deleteFrom("recently_played")
+          .where("id", "not in", (eb) =>
+            eb.selectFrom("recently_played").select("id").orderBy("id", "desc").limit(RECENTLY_PLAYED_CAP)
           )
           .execute();
       });
@@ -529,6 +570,28 @@ function toRecentlyViewed(row: {
     title: row.title,
     subtitle: row.subtitle,
     viewedAt: row.viewed_at
+  };
+}
+
+function toRecentlyPlayed(row: {
+  source_id: string;
+  track_id: string;
+  kind: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  image: string | null;
+  played_at: string;
+}): RecentlyPlayedItem {
+  return {
+    sourceId: row.source_id,
+    trackId: row.track_id,
+    kind: row.kind === "radio" ? "radio" : "track",
+    title: row.title,
+    artist: row.artist,
+    album: row.album,
+    albumArtUri: row.image,
+    playedAt: row.played_at
   };
 }
 

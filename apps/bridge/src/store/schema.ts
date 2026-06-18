@@ -93,6 +93,21 @@ export interface RecentQueueItemTable {
   album: string | null;
 }
 
+// Tracks/stations actually played (recorded from now-playing transport events on any
+// controller), newest first, deduped by (source, track) and capped. Powers the
+// Library "Recently played" section for quick replay.
+export interface RecentlyPlayedTable {
+  id: Generated<number>;
+  source_id: string;
+  track_id: string;
+  kind: string; // "track" | "radio"
+  title: string;
+  artist: string | null;
+  album: string | null;
+  image: string | null; // albumArtUri / station logo
+  played_at: string; // ISO-8601
+}
+
 export interface Database {
   preference: PreferenceTable;
   recently_viewed: RecentlyViewedTable;
@@ -102,4 +117,5 @@ export interface Database {
   playlist_item: PlaylistItemTable;
   recent_queue: RecentQueueTable;
   recent_queue_item: RecentQueueItemTable;
+  recently_played: RecentlyPlayedTable;
 }

@@ -1,4 +1,4 @@
-import type { Alarm, AlarmInput, BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, EqPayload, EqPreset, EqState, Favorite, MusicServiceDiscovery, NowPlaying, PlaybackMode, Playlist, PlaylistItem, Preference, QueueItem, RecentlyViewedItem, RecentQueue, RegisterCustomServiceResult, RepeatMode, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, SourceItemKind, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
+import type { Alarm, AlarmInput, BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, EqPayload, EqPreset, EqState, Favorite, MusicServiceDiscovery, NowPlaying, PlaybackMode, Playlist, PlaylistItem, Preference, QueueItem, RecentlyPlayedItem, RecentlyViewedItem, RecentQueue, RegisterCustomServiceResult, RepeatMode, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, SourceItemKind, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
 
 export interface AddPlaylistItemInput {
   id: string;
@@ -155,6 +155,8 @@ export const bridgeApi = {
   },
   recordRecentlyViewed: (item: Omit<RecentlyViewedItem, "viewedAt">) =>
     request<void>("/api/recently-viewed", { method: "POST", body: JSON.stringify(item) }),
+  recentlyPlayed: (limit?: number) =>
+    request<RecentlyPlayedItem[]>(`/api/recently-played${limit ? `?limit=${limit}` : ""}`),
   eqPresets: () => request<EqPreset[]>("/api/eq-presets"),
   createEqPreset: (input: Omit<EqPreset, "id" | "createdAt">) =>
     request<EqPreset>("/api/eq-presets", { method: "POST", body: JSON.stringify(input) }),
