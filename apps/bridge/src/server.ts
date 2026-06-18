@@ -637,9 +637,11 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, await service.playTrackRefs(archived.items, body.groupId, "replace", archived.startTrack ?? 1));
     }
 
-    const recentQueueDeleteMatch = url.pathname.match(/^\/api\/recent-queues\/(\d+)$/);
-    if (request.method === "DELETE" && recentQueueDeleteMatch) {
-      await store.deleteRecentQueue(Number(recentQueueDeleteMatch[1]));
+    // POST (not DELETE) to match the bridge's POST-only write convention — CORS only
+    // advertises GET,POST,OPTIONS, so a cross-origin DELETE would fail preflight.
+    const recentQueueDismissMatch = url.pathname.match(/^\/api\/recent-queues\/(\d+)\/dismiss$/);
+    if (request.method === "POST" && recentQueueDismissMatch) {
+      await store.deleteRecentQueue(Number(recentQueueDismissMatch[1]));
       return empty(response, 204);
     }
 

@@ -190,7 +190,7 @@ export const bridgeApi = {
   restoreRecentQueue: (id: number, groupId: string) =>
     request<NowPlaying>(`/api/recent-queues/${id}/restore`, { method: "POST", body: JSON.stringify({ groupId }) }),
   deleteRecentQueue: (id: number) =>
-    request<void>(`/api/recent-queues/${id}`, { method: "DELETE" }),
+    request<void>(`/api/recent-queues/${id}/dismiss`, { method: "POST", body: "{}" }),
   sourceIcons: () => request<SourceIconMeta[]>("/api/source-icons"),
   uploadSourceIcon: (sourceId: string, file: File) =>
     request<SourceIconMeta>(`/api/source-icons/${encodeURIComponent(sourceId)}`, {
