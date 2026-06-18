@@ -1,4 +1,4 @@
-import type { Alarm, AlarmInput, BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, EqPayload, EqPreset, EqState, Favorite, MusicServiceDiscovery, NowPlaying, PlaybackMode, Playlist, PlaylistItem, Preference, QueueItem, RecentlyViewedItem, RegisterCustomServiceResult, RepeatMode, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, SourceItemKind, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
+import type { Alarm, AlarmInput, BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, EqPayload, EqPreset, EqState, Favorite, MusicServiceDiscovery, NowPlaying, PlaybackMode, Playlist, PlaylistItem, Preference, QueueItem, RecentlyViewedItem, RecentQueue, RegisterCustomServiceResult, RepeatMode, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, SourceItemKind, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
 
 export interface AddPlaylistItemInput {
   id: string;
@@ -185,6 +185,12 @@ export const bridgeApi = {
     request<NowPlaying>(`/api/playlists/${id}/play`, { method: "POST", body: JSON.stringify({ groupId, mode, fromStart }) }),
   savePlaylistFromQueue: (name: string, groupId: string) =>
     request<{ playlist: Playlist; saved: number; skipped: number }>("/api/playlists/from-queue", { method: "POST", body: JSON.stringify({ name, groupId }) }),
+  recentQueues: (coordinatorUuid: string) =>
+    request<RecentQueue[]>(`/api/zones/${encodeURIComponent(coordinatorUuid)}/recent-queues`),
+  restoreRecentQueue: (id: number, groupId: string) =>
+    request<NowPlaying>(`/api/recent-queues/${id}/restore`, { method: "POST", body: JSON.stringify({ groupId }) }),
+  deleteRecentQueue: (id: number) =>
+    request<void>(`/api/recent-queues/${id}`, { method: "DELETE" }),
   sourceIcons: () => request<SourceIconMeta[]>("/api/source-icons"),
   uploadSourceIcon: (sourceId: string, file: File) =>
     request<SourceIconMeta>(`/api/source-icons/${encodeURIComponent(sourceId)}`, {

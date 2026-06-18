@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, RotateCcw, Star, Trash2 } from "lucide-react";
-import type { Favorite, Playlist, PlaylistItem, PlaybackMode, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
+import type { Favorite, Playlist, PlaylistItem, PlaybackMode, RecentQueue, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
 import { bridgeApi } from "./api.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { buildGroupOptions } from "./groupPalette.js";
@@ -20,6 +20,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const dialogs = useDialogs();
   const favs = useFavorites();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [recentQueues, setRecentQueues] = useState<RecentQueue[]>([]);
   const [sources, setSources] = useState<SourceDescriptor[]>([]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<OpenPlaylist | null>(null);
@@ -31,6 +32,9 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
 
   const groupOptions = buildGroupOptions(groups);
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupId) ?? groupOptions[0];
+  // Recent queues are keyed by the coordinator's stable zone UUID (the queue lives on
+  // the coordinator and follows it through grouping).
+  const coordinatorUuid = groups.find((group) => group.id === selectedGroupId)?.coordinatorId;
 
   // Favorites come from the shared hook so preset changes here and in the player
   // stay in sync; only playlists are local to this view.
@@ -38,7 +42,13 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     setPlaylists(await bridgeApi.playlists());
   }, []);
 
+  const refreshRecentQueues = useCallback(async () => {
+    if (!coordinatorUuid) { setRecentQueues([]); return; }
+    setRecentQueues(await bridgeApi.recentQueues(coordinatorUuid).catch(() => []));
+  }, [coordinatorUuid]);
+
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refreshRecentQueues(); }, [refreshRecentQueues]);
   useEffect(() => { void bridgeApi.listSources().then(setSources).catch(() => { /* non-fatal */ }); }, []);
 
   const sourceName = useCallback(
@@ -69,6 +79,11 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const filteredPlaylists = useMemo(
     () => (trimmedQuery ? playlists.filter((pl) => pl.name.toLowerCase().includes(trimmedQuery)) : playlists),
     [playlists, trimmedQuery]
+  );
+
+  const filteredRecentQueues = useMemo(
+    () => (trimmedQuery ? recentQueues.filter((rq) => rq.title.toLowerCase().includes(trimmedQuery)) : recentQueues),
+    [recentQueues, trimmedQuery]
   );
 
   const favoriteToInput = (favorite: Favorite): FavoriteInput => ({
@@ -166,6 +181,26 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     } finally {
       setBusy(false);
     }
+  };
+
+  const restoreQueue = async (rq: RecentQueue) => {
+    const groupId = requireGroup();
+    if (!groupId) return;
+    setBusy(true);
+    try {
+      await bridgeApi.restoreRecentQueue(rq.id, groupId);
+      setStatus({ ok: true, message: `Restored “${rq.title}” (${rq.itemCount} ${rq.itemCount === 1 ? "track" : "tracks"}).` });
+      await refreshRecentQueues();
+    } catch (err) {
+      setStatus({ ok: false, message: err instanceof Error ? err.message : "Could not restore queue" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismissQueue = async (rq: RecentQueue) => {
+    await bridgeApi.deleteRecentQueue(rq.id);
+    await refreshRecentQueues();
   };
 
   const openPlaylist = async (id: number) => {
@@ -324,6 +359,33 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
         )}
       </div>
 
+      {recentQueues.length > 0 ? (
+        <div className="library-section">
+          <h3>Recent queues</h3>
+          {filteredRecentQueues.length === 0 ? (
+            <div className="empty-panel">No recent queues match “{query.trim()}”.</div>
+          ) : (
+            <ul className="library-track-list">
+              {filteredRecentQueues.map((rq) => (
+                <li key={rq.id} className="library-track">
+                  <div className="browse-track-meta">
+                    <span>{rq.title}</span>
+                    <small>
+                      {rq.itemCount} {rq.itemCount === 1 ? "track" : "tracks"} · {relativeTime(rq.capturedAt)}
+                      {rq.startTrack && rq.startTrack > 1 ? ` · was on track ${rq.startTrack}` : ""}
+                    </small>
+                  </div>
+                  <div className="browse-actions">
+                    <button type="button" className="browse-action" title="Restore this queue" aria-label="Restore queue" disabled={busy} onClick={() => void restoreQueue(rq)}><RotateCcw size={14} /></button>
+                    <button type="button" className="browse-action" title="Remove" aria-label="Remove recent queue" onClick={() => void dismissQueue(rq)}><Trash2 size={14} /></button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
+
       <div className="library-section">
         <h3>Playlists</h3>
         <div className="add-to-playlist-new">
@@ -367,4 +429,17 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
 
 function verb(mode: PlaybackMode): string {
   return mode === "replace" ? "Playing" : mode === "next" ? "Queued next:" : "Queued at end:";
+}
+
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
 }

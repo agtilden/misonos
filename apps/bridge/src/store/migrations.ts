@@ -139,11 +139,55 @@ const m004_playlist_resume: Migration = {
   }
 };
 
+// Recent queues: auto-archive a zone's music queue before a destructive event blows
+// it away, keyed by the coordinator's stable zone UUID, for one-tap restore.
+const m005_recent_queues: Migration = {
+  async up(db: Kysely<unknown>): Promise<void> {
+    await db.schema
+      .createTable("recent_queue")
+      .addColumn("id", "integer", (c) => c.primaryKey().autoIncrement())
+      .addColumn("coordinator_uuid", "text", (c) => c.notNull())
+      .addColumn("title", "text", (c) => c.notNull())
+      .addColumn("item_count", "integer", (c) => c.notNull())
+      .addColumn("start_track", "integer")
+      .addColumn("fingerprint", "text", (c) => c.notNull())
+      .addColumn("captured_at", "text", (c) => c.notNull())
+      .execute();
+    await db.schema
+      .createIndex("recent_queue_by_coordinator")
+      .on("recent_queue")
+      .columns(["coordinator_uuid", "captured_at"])
+      .execute();
+
+    await db.schema
+      .createTable("recent_queue_item")
+      .addColumn("id", "integer", (c) => c.primaryKey().autoIncrement())
+      .addColumn("recent_queue_id", "integer", (c) => c.notNull().references("recent_queue.id").onDelete("cascade"))
+      .addColumn("position", "integer", (c) => c.notNull())
+      .addColumn("source_id", "text", (c) => c.notNull())
+      .addColumn("track_id", "text", (c) => c.notNull())
+      .addColumn("title", "text", (c) => c.notNull())
+      .addColumn("artist", "text")
+      .addColumn("album", "text")
+      .execute();
+    await db.schema
+      .createIndex("recent_queue_item_order")
+      .on("recent_queue_item")
+      .columns(["recent_queue_id", "position"])
+      .execute();
+  },
+  async down(db: Kysely<unknown>): Promise<void> {
+    await db.schema.dropTable("recent_queue_item").execute();
+    await db.schema.dropTable("recent_queue").execute();
+  }
+};
+
 const migrations: Record<string, Migration> = {
   "001_init": m001_init,
   "002_library": m002_library,
   "003_favorite_presets": m003_favorite_presets,
-  "004_playlist_resume": m004_playlist_resume
+  "004_playlist_resume": m004_playlist_resume,
+  "005_recent_queues": m005_recent_queues
 };
 
 export const migrationProvider: MigrationProvider = {

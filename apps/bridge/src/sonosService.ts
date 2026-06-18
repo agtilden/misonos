@@ -89,6 +89,13 @@ export class SonosService {
   private rediscoveryInProgress = false;
   private discoveryInFlight: Promise<void> | undefined;
   onSnapshot?: (snapshot: BridgeSnapshot) => void;
+  // Fired with the current queue right before a replace-mode play destroys it, so a
+  // listener can archive it for restore. Only emitted for multi-track music queues.
+  onQueueArchive?: (archive: {
+    coordinatorUuid: string;
+    items: { sourceId: string; trackId: string; title: string; artist: string | null; album: string | null }[];
+    startTrack: number | null;
+  }) => void | Promise<void>;
 
   constructor(private readonly config: BridgeConfig = loadConfig()) {}
 
@@ -798,6 +805,8 @@ export class SonosService {
     });
 
     if (mode === "replace") {
+      // About to wipe the queue — give a listener the chance to archive it first.
+      await this.archiveQueueBeforeReplace(groupId, coordinator.uuid, coordinator.ipAddress);
       await callSoap(coordinator.ipAddress, "AVTransport", "RemoveAllTracksFromQueue", { InstanceID: 0 });
       for (const item of queueItems) {
         await callSoap(coordinator.ipAddress, "AVTransport", "AddURIToQueue", {
@@ -877,6 +886,25 @@ export class SonosService {
   /** Public wrapper for callers (e.g. resume capture) that need the source ref of a now-playing URI. */
   refFromQueueUri(uri: string | undefined): { sourceId: string; trackId: string } | undefined {
     return this.queueUriToRef(uri);
+  }
+
+  /**
+   * Snapshot the current queue and hand it to `onQueueArchive` before a replace wipes
+   * it. Only multi-track queues are archived (a lone live radio stream isn't worth
+   * keeping, and naturally excludes empty/line-in/TV sources, which aren't queue-based).
+   * Best-effort: never throws — archiving must not block or fail playback.
+   */
+  private async archiveQueueBeforeReplace(groupId: string, coordinatorUuid: string, coordinatorIp: string): Promise<void> {
+    if (!this.onQueueArchive) return;
+    try {
+      const snapshot = await this.queueTrackRefs(groupId);
+      if (snapshot.items.length < 2) return;
+      const position = await callSoap(coordinatorIp, "AVTransport", "GetPositionInfo", { InstanceID: 0 });
+      const startTrack = numericPosition(position.Track) ?? 1;
+      await this.onQueueArchive({ coordinatorUuid, items: snapshot.items, startTrack });
+    } catch (error) {
+      console.warn(`[bridge] queue archive skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** Recover {sourceId, trackId} from a queue item URI (SMAPI x-sonos-http or our stream-proxy URL). */

@@ -3,12 +3,13 @@ import { dirname } from "node:path";
 import SqliteDatabase from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 import { Migrator } from "kysely/migration";
-import type { EqPreset, Favorite, Playlist, PlaylistItem, Preference, RecentlyViewedItem, SourceItemKind } from "@misonos/sonos-protocol";
+import type { EqPreset, Favorite, Playlist, PlaylistItem, Preference, RecentlyViewedItem, RecentQueue, SourceItemKind } from "@misonos/sonos-protocol";
 import { migrationProvider } from "./migrations.js";
 import type { Database } from "./schema.js";
 
 const RECENTLY_VIEWED_CAP = 50;
 const DEFAULT_RECENTLY_VIEWED_LIMIT = 50;
+const RECENT_QUEUE_CAP = 3; // distinct recent queues kept per coordinator
 
 /** A flat track row destined for a playlist (albums are expanded into these upstream). */
 export interface PlaylistItemInput {
@@ -18,6 +19,20 @@ export interface PlaylistItemInput {
   artist?: string | null;
   album?: string | null;
   durationSeconds?: number | null;
+}
+
+/** A track row of an archived queue (refs + display metadata). */
+export interface RecentQueueItemInput {
+  sourceId: string;
+  trackId: string;
+  title: string;
+  artist?: string | null;
+  album?: string | null;
+}
+
+export interface SaveRecentQueueInput {
+  items: RecentQueueItemInput[];
+  startTrack?: number | null; // 1-based track playing when archived
 }
 
 export interface Store {
@@ -45,6 +60,11 @@ export interface Store {
   // Per-playlist resume: remember/forget the track to resume at (by stable identity).
   setPlaylistResume(id: number, sourceId: string, trackId: string): Promise<void>;
   clearPlaylistResume(id: number): Promise<void>;
+  // Recent queues: auto-archived music queues, keyed by coordinator UUID.
+  saveRecentQueue(coordinatorUuid: string, input: SaveRecentQueueInput): Promise<RecentQueue | undefined>;
+  listRecentQueues(coordinatorUuid: string): Promise<RecentQueue[]>;
+  getRecentQueueRefs(id: number): Promise<{ items: { sourceId: string; trackId: string }[]; startTrack: number | null } | undefined>;
+  deleteRecentQueue(id: number): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -362,9 +382,101 @@ export async function createStore(dbPath: string): Promise<Store> {
         .execute();
     },
 
+    async saveRecentQueue(coordinatorUuid: string, input: SaveRecentQueueInput): Promise<RecentQueue | undefined> {
+      const items = input.items;
+      if (items.length === 0) return undefined;
+      const fingerprint = items.map((i) => `${i.sourceId}:${i.trackId}`).join("|");
+      const capturedAt = new Date().toISOString();
+      return db.transaction().execute(async (tx) => {
+        // Dedupe: an identical capture for this coordinator just moves to the top.
+        await tx
+          .deleteFrom("recent_queue")
+          .where("coordinator_uuid", "=", coordinatorUuid)
+          .where("fingerprint", "=", fingerprint)
+          .execute();
+        const row = await tx
+          .insertInto("recent_queue")
+          .values({
+            coordinator_uuid: coordinatorUuid,
+            title: items[0].title,
+            item_count: items.length,
+            start_track: input.startTrack ?? null,
+            fingerprint,
+            captured_at: capturedAt
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        await tx
+          .insertInto("recent_queue_item")
+          .values(items.map((it, index) => ({
+            recent_queue_id: row.id,
+            position: index,
+            source_id: it.sourceId,
+            track_id: it.trackId,
+            title: it.title,
+            artist: it.artist ?? null,
+            album: it.album ?? null
+          })))
+          .execute();
+        // Cap at the newest N per coordinator (items cascade on delete).
+        await tx
+          .deleteFrom("recent_queue")
+          .where("coordinator_uuid", "=", coordinatorUuid)
+          .where("id", "not in", (eb) =>
+            eb.selectFrom("recent_queue").select("id").where("coordinator_uuid", "=", coordinatorUuid).orderBy("id", "desc").limit(RECENT_QUEUE_CAP)
+          )
+          .execute();
+        return toRecentQueue(row);
+      });
+    },
+
+    async listRecentQueues(coordinatorUuid: string): Promise<RecentQueue[]> {
+      const rows = await db
+        .selectFrom("recent_queue")
+        .selectAll()
+        .where("coordinator_uuid", "=", coordinatorUuid)
+        .orderBy("id", "desc")
+        .execute();
+      return rows.map(toRecentQueue);
+    },
+
+    async getRecentQueueRefs(id: number): Promise<{ items: { sourceId: string; trackId: string }[]; startTrack: number | null } | undefined> {
+      const row = await db.selectFrom("recent_queue").select(["start_track"]).where("id", "=", id).executeTakeFirst();
+      if (!row) return undefined;
+      const items = await db
+        .selectFrom("recent_queue_item")
+        .select(["source_id", "track_id"])
+        .where("recent_queue_id", "=", id)
+        .orderBy("position", "asc")
+        .execute();
+      return { items: items.map((r) => ({ sourceId: r.source_id, trackId: r.track_id })), startTrack: row.start_track };
+    },
+
+    async deleteRecentQueue(id: number): Promise<void> {
+      await db.deleteFrom("recent_queue").where("id", "=", id).execute();
+    },
+
     async close(): Promise<void> {
       await db.destroy();
     }
+  };
+}
+
+function toRecentQueue(row: {
+  id: number;
+  coordinator_uuid: string;
+  title: string;
+  item_count: number;
+  start_track: number | null;
+  captured_at: string;
+}): RecentQueue {
+  return {
+    id: row.id,
+    coordinatorUuid: row.coordinator_uuid,
+    title: row.title,
+    itemCount: row.item_count,
+    startTrack: row.start_track,
+    capturedAt: row.captured_at
   };
 }
 
