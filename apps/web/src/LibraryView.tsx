@@ -281,8 +281,11 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
               <RotateCcw size={15} /> From start
             </button>
           ) : null}
-          <button type="button" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "end")}>
-            <ListEnd size={15} /> Queue all
+          <button type="button" title="Play after the current track (keeps the queue)" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "next")}>
+            <ListPlus size={15} /> Play next
+          </button>
+          <button type="button" title="Add to the end of the queue (keeps the queue)" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "end")}>
+            <ListEnd size={15} /> Add to end
           </button>
         </div>
         {status ? <div className={status.ok ? "service-result ok" : "service-result error"}>{status.message}</div> : null}
