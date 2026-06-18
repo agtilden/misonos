@@ -39,6 +39,10 @@ interface LocalPlayerApi {
   setVolume: (volume: number) => void;
   toggleMute: () => void;
   stop: () => void;
+  // Lazily route the already-playing audio through Web Audio and return per-channel
+  // analysers, so the VU meter can read THIS device's real output (perfectly in
+  // sync, no second download). Returns null if unavailable.
+  getAnalysers: () => { left: AnalyserNode; right: AnalyserNode } | null;
 }
 
 const LocalPlayerContext = createContext<LocalPlayerApi | null>(null);
@@ -52,6 +56,10 @@ function streamUrl(track: LocalTrack): string {
 // that the main UI binds to like a Sonos group — but NOT synchronized with Sonos.
 export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Web Audio graph, attached lazily the first time the VU meter taps this device.
+  // Once attached, the element's output flows through `gain` (so volume/mute keep
+  // working) and `splitter` feeds the per-channel analysers.
+  const audioGraphRef = useRef<{ ctx: AudioContext; gain: GainNode; left: AnalyserNode; right: AnalyserNode } | null>(null);
   const [queue, setQueue] = useState<LocalTrack[]>([]);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -134,15 +142,49 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     setMuted(false);
     const audio = audioRef.current;
     if (audio) { audio.volume = clamped / 100; audio.muted = false; }
+    // Once the Web Audio tap is attached the element's own volume is bypassed —
+    // drive output through the gain node instead.
+    if (audioGraphRef.current) audioGraphRef.current.gain.gain.value = clamped / 100;
   }, []);
 
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
       const nextMuted = !prev;
       if (audioRef.current) audioRef.current.muted = nextMuted;
+      if (audioGraphRef.current) audioGraphRef.current.gain.gain.value = nextMuted ? 0 : volume / 100;
       return nextMuted;
     });
-  }, []);
+  }, [volume]);
+
+  const getAnalysers = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return null;
+    if (audioGraphRef.current) return { left: audioGraphRef.current.left, right: audioGraphRef.current.right };
+    try {
+      const Ctx: typeof AudioContext = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new Ctx();
+      const source = ctx.createMediaElementSource(audio);
+      const gain = ctx.createGain();
+      gain.gain.value = muted ? 0 : volume / 100;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      const splitter = ctx.createChannelSplitter(2);
+      source.connect(splitter);
+      const left = ctx.createAnalyser();
+      left.fftSize = 2048;
+      left.smoothingTimeConstant = 0;
+      const right = ctx.createAnalyser();
+      right.fftSize = 2048;
+      right.smoothingTimeConstant = 0;
+      splitter.connect(left, 0);
+      splitter.connect(right, 1);
+      void ctx.resume();
+      audioGraphRef.current = { ctx, gain, left, right };
+      return { left, right };
+    } catch {
+      return null;
+    }
+  }, [muted, volume]);
 
   const stop = useCallback(() => {
     const audio = audioRef.current;
@@ -194,9 +236,9 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   const api = useMemo<LocalPlayerApi>(() => ({
     active: queue.length > 0,
     playing, nowPlaying, queue: queueItems, activeIndex: index, position, duration, volume, muted,
-    enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop
+    enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop, getAnalysers
   }), [queue.length, playing, nowPlaying, queueItems, index, position, duration, volume, muted,
-      enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop]);
+      enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop, getAnalysers]);
 
   return (
     <LocalPlayerContext.Provider value={api}>

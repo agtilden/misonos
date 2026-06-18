@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Info, Volume2, VolumeX, X } from "lucide-react";
+import { Info, X } from "lucide-react";
 
 // A full-screen, vintage-hi-fi VU meter. It analyzes the SAME proxy stream the
 // speaker is playing (same-origin /api/stream/...) with the Web Audio API on the
@@ -104,13 +104,16 @@ function Gauge({ label, needleRef, ledRef }: GaugeProps) {
 }
 
 interface VuMeterProps {
-  // Same-origin proxy path for the active track, or null if the current audio
-  // isn't something MiSonos streams (so we can't analyze it).
-  streamPath: string | null;
-  startPositionSeconds: number;
+  // Local "this device" mode: tap the already-playing audio graph (perfect sync,
+  // no second download).
+  getAnalysers?: () => { left: AnalyserNode; right: AnalyserNode } | null;
+  // Sonos mode: SSE endpoint streaming per-window levels the bridge decoded from
+  // the bytes it's already sending the speaker.
+  meterUrl?: string | null;
+  // Sonos finite tracks: current playback position (seconds) for window indexing.
+  getPosition?: () => number;
   isLive: boolean;
-  // The speaker's transport state — the analysis is slaved to it so the meter
-  // stops with the music instead of running on its own independent copy.
+  // Speaker/local transport state — when not playing, the animation halts.
   isPlaying: boolean;
   title?: string;
   subtitle?: string;
@@ -118,38 +121,39 @@ interface VuMeterProps {
 }
 
 interface Spring { angle: number; vel: number }
-type Phase = "nostream" | "running" | "blocked" | "error";
+interface Channel { needle: React.RefObject<SVGGElement | null>; led: React.RefObject<SVGCircleElement | null>; spring: Spring; peakAt: number }
+type Frame = { lr: number; rr: number; lp: number; rp: number };
 
-export function VuMeter({ streamPath, startPositionSeconds, isLive, isPlaying, title, subtitle, onClose }: VuMeterProps) {
-  const [phase, setPhase] = useState<Phase>(streamPath ? "blocked" : "nostream");
-  const [error, setError] = useState<string | null>(null);
+export function VuMeter({ getAnalysers, meterUrl, getPosition, isLive, isPlaying, title, subtitle, onClose }: VuMeterProps) {
+  const [active, setActive] = useState(false);
   const [nudge, setNudge] = useState(0);
-  const [muted, setMuted] = useState(true);
   const [footerOpen, setFooterOpen] = useState(true);
+
+  const local = !!getAnalysers;
+  const noSignal = !local && !meterUrl;
 
   const needleL = useRef<SVGGElement | null>(null);
   const needleR = useRef<SVGGElement | null>(null);
   const ledL = useRef<SVGCircleElement | null>(null);
   const ledR = useRef<SVGCircleElement | null>(null);
 
-  const ctxRef = useRef<AudioContext | null>(null);
-  const elRef = useRef<HTMLAudioElement | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
-  const mutedRef = useRef(true);
-  const analysersRef = useRef<{ node: AnalyserNode; data: Float32Array; spring: Spring; led: React.RefObject<SVGCircleElement | null>; needle: React.RefObject<SVGGElement | null>; peakAt: number }[]>([]);
+  const sampleRef = useRef<(() => Frame | null) | null>(null);
+  const nudgeRef = useRef(0);
+  const getPositionRef = useRef(getPosition);
   const rafRef = useRef<number | null>(null);
-  const lastNudgeRef = useRef(0);
+  const channelsRef = useRef<[Channel, Channel] | null>(null);
 
-  const teardown = useCallback(() => {
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-    elRef.current?.pause();
-    if (elRef.current) elRef.current.src = "";
-    void ctxRef.current?.close();
-    ctxRef.current = null;
-    elRef.current = null;
-    gainRef.current = null;
-    analysersRef.current = [];
+  useEffect(() => { nudgeRef.current = nudge; }, [nudge]);
+  useEffect(() => { getPositionRef.current = getPosition; });
+
+  const ensureChannels = useCallback((): [Channel, Channel] => {
+    if (!channelsRef.current) {
+      channelsRef.current = [
+        { needle: needleL, led: ledL, spring: { angle: vuToAngle(-20), vel: 0 }, peakAt: -Infinity },
+        { needle: needleR, led: ledR, spring: { angle: vuToAngle(-20), vel: 0 }, peakAt: -Infinity }
+      ];
+    }
+    return channelsRef.current;
   }, []);
 
   const stopLoop = useCallback(() => {
@@ -159,159 +163,101 @@ export function VuMeter({ streamPath, startPositionSeconds, isLive, isPlaying, t
 
   const restNeedles = useCallback(() => {
     const rest = vuToAngle(-20);
-    for (const a of analysersRef.current) {
-      a.spring.angle = rest;
-      a.spring.vel = 0;
-      a.needle.current?.setAttribute("transform", `rotate(${rest.toFixed(2)} ${PIVOT_X} ${PIVOT_Y})`);
-      a.led.current?.setAttribute("opacity", "0.12");
+    for (const ch of ensureChannels()) {
+      ch.spring.angle = rest;
+      ch.spring.vel = 0;
+      ch.needle.current?.setAttribute("transform", `rotate(${rest.toFixed(2)} ${PIVOT_X} ${PIVOT_Y})`);
+      ch.led.current?.setAttribute("opacity", "0.12");
     }
-  }, []);
+  }, [ensureChannels]);
 
   const runLoop = useCallback(() => {
     if (rafRef.current !== null) return;
+    const chans = ensureChannels();
     let last = performance.now();
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      for (const a of analysersRef.current) {
-        a.node.getFloatTimeDomainData(a.data as Float32Array<ArrayBuffer>);
-        let sum = 0;
-        let peak = 0;
-        for (let i = 0; i < a.data.length; i++) {
-          const v = a.data[i];
-          sum += v * v;
-          const abs = v < 0 ? -v : v;
-          if (abs > peak) peak = abs;
-        }
-        const rms = Math.sqrt(sum / a.data.length);
-        const vu = 20 * Math.log10(Math.max(rms, 1e-7)) - ZERO_VU_DBFS;
+      const frame = sampleRef.current?.() ?? null;
+      const rms = [frame?.lr ?? 0, frame?.rr ?? 0];
+      const peak = [frame?.lp ?? 0, frame?.rp ?? 0];
+      for (let i = 0; i < 2; i++) {
+        const ch = chans[i];
+        const vu = 20 * Math.log10(Math.max(rms[i], 1e-7)) - ZERO_VU_DBFS;
         const target = vuToAngle(vu);
-        const acc = STIFFNESS * (target - a.spring.angle) - DAMPING * a.spring.vel;
-        a.spring.vel += acc * dt;
-        a.spring.angle += a.spring.vel * dt;
-        a.needle.current?.setAttribute("transform", `rotate(${a.spring.angle.toFixed(2)} ${PIVOT_X} ${PIVOT_Y})`);
-        const peakVu = 20 * Math.log10(Math.max(peak, 1e-7)) - ZERO_VU_DBFS;
-        if (peakVu > 0) a.peakAt = now;
-        a.led.current?.setAttribute("opacity", now - a.peakAt < 900 ? "1" : "0.12");
+        const acc = STIFFNESS * (target - ch.spring.angle) - DAMPING * ch.spring.vel;
+        ch.spring.vel += acc * dt;
+        ch.spring.angle += ch.spring.vel * dt;
+        ch.needle.current?.setAttribute("transform", `rotate(${ch.spring.angle.toFixed(2)} ${PIVOT_X} ${PIVOT_Y})`);
+        const peakVu = 20 * Math.log10(Math.max(peak[i], 1e-7)) - ZERO_VU_DBFS;
+        if (peakVu > 0) ch.peakAt = now;
+        ch.led.current?.setAttribute("opacity", now - ch.peakAt < 900 ? "1" : "0.12");
       }
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, []);
+  }, [ensureChannels]);
 
-  // Resume the (already-built) audio graph and begin metering. Called both
-  // automatically (effect) and from the Start button when autoplay was blocked.
-  // play()/resume() are kicked off synchronously so a user gesture still counts.
-  const begin = useCallback(() => {
-    const ctx = ctxRef.current;
-    const el = elRef.current;
-    if (!ctx || !el) return;
-    Promise.all([ctx.resume(), el.play()])
-      .then(() => {
-        if (!ctxRef.current) return; // torn down meanwhile
-        if (!isLive && Number.isFinite(startPositionSeconds) && startPositionSeconds > 0) {
-          const seek = () => { try { el.currentTime = startPositionSeconds; } catch { /* not seekable yet */ } };
-          if (el.readyState >= 1) seek(); else el.addEventListener("loadedmetadata", seek, { once: true });
-        }
-        lastNudgeRef.current = 0;
-        setError(null);
-        setPhase("running");
-        runLoop();
-      })
-      .catch((err: unknown) => {
-        if (!ctxRef.current) return;
-        const name = err instanceof Error ? err.name : "";
-        // Autoplay gating (no gesture yet) isn't an error — fall back to Start.
-        if (name === "NotAllowedError" || name === "AbortError") {
-          setPhase("blocked");
-        } else {
-          setError(err instanceof Error ? err.message : "Couldn't start the meter");
-          setPhase("error");
-        }
-      });
-  }, [isLive, startPositionSeconds, runLoop]);
-
-  // Build the audio graph for the current track and try to auto-start. The effect
-  // owns the lifecycle so a track change (or StrictMode remount) tears down and
-  // re-creates cleanly. Auto-start succeeds where the browser allows (e.g. after
-  // the click that opened the meter); otherwise it surfaces the Start button.
+  // Local tap: read this device's already-playing audio graph.
   useEffect(() => {
-    if (!streamPath) { setPhase("nostream"); return; }
-    setError(null);
-    try {
-      const Ctx: typeof AudioContext = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new Ctx();
-      ctxRef.current = ctx;
-      const el = new Audio();
-      el.src = streamPath;
-      el.crossOrigin = "anonymous";
-      el.preload = "auto";
-      elRef.current = el;
-      const source = ctx.createMediaElementSource(el);
-      const splitter = ctx.createChannelSplitter(2);
-      source.connect(splitter);
-      // A gain → destination tap so the user can optionally hear this device's copy
-      // (to sync by ear). Muted by default; the speakers do the real playing.
-      const gain = ctx.createGain();
-      gain.gain.value = mutedRef.current ? 0 : 1;
-      source.connect(gain);
-      gain.connect(ctx.destination);
-      gainRef.current = gain;
-      const make = (channel: number, needle: typeof needleL, led: typeof ledL) => {
-        const node = ctx.createAnalyser();
-        node.fftSize = 2048;
-        node.smoothingTimeConstant = 0; // our own ballistics
-        splitter.connect(node, channel);
-        return { node, data: new Float32Array(node.fftSize), spring: { angle: vuToAngle(-20), vel: 0 }, led, needle, peakAt: -Infinity };
-      };
-      analysersRef.current = [make(0, needleL, ledL), make(1, needleR, ledR)];
-      // Backstop: if our copy reaches its own end, halt instead of idling forever.
-      el.addEventListener("ended", () => { stopLoop(); restNeedles(); }, { once: true });
-      begin();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start the meter");
-      setPhase("error");
-    }
-    return () => teardown();
-  }, [streamPath, begin, teardown, stopLoop, restNeedles]);
+    if (!getAnalysers) return;
+    const nodes = getAnalysers();
+    if (!nodes) { setActive(false); return; }
+    const data = new Float32Array(nodes.left.fftSize);
+    const read = (node: AnalyserNode) => {
+      node.getFloatTimeDomainData(data as Float32Array<ArrayBuffer>);
+      let sum = 0, peak = 0;
+      for (let i = 0; i < data.length; i++) { const v = data[i]; sum += v * v; const a = v < 0 ? -v : v; if (a > peak) peak = a; }
+      return { rms: Math.sqrt(sum / data.length), peak };
+    };
+    sampleRef.current = () => {
+      const l = read(nodes.left);
+      const r = read(nodes.right);
+      return { lr: l.rms, rr: r.rms, lp: l.peak, rp: r.peak };
+    };
+    setActive(true);
+    return () => { sampleRef.current = null; };
+  }, [getAnalysers]);
 
-  // Re-seek finite tracks when the nudge slider moves (live streams can't seek).
+  // Sonos: consume bridge-decoded level windows over SSE; index by playback position.
   useEffect(() => {
-    const el = elRef.current;
-    if (!el || isLive) return;
-    const delta = nudge - lastNudgeRef.current;
-    lastNudgeRef.current = nudge;
-    if (delta !== 0 && Number.isFinite(el.currentTime)) {
-      try { el.currentTime = clamp(el.currentTime + delta, 0, el.duration || el.currentTime + delta); } catch { /* ignore */ }
-    }
-  }, [nudge, isLive]);
-
-  // Slave the analysis to the speaker: when Sonos pauses/stops/ends the track, our
-  // copy pauses and the animation halts (instead of running on its own forever).
-  // Pausing/resuming preserves alignment, since both sides hold the same position.
-  useEffect(() => {
-    if (phase !== "running") return;
-    const el = elRef.current;
-    if (!el) return;
-    if (isPlaying) {
-      void el.play().catch(() => { /* ignore */ });
-      runLoop();
-    } else {
-      el.pause();
-      stopLoop();
-      restNeedles();
-    }
-  }, [isPlaying, phase, runLoop, stopLoop, restNeedles]);
-
-  // Mute toggle for the on-device "sync by ear" tap.
-  const toggleMute = useCallback(() => {
-    setMuted((prev) => {
-      const next = !prev;
-      mutedRef.current = next;
-      if (gainRef.current && ctxRef.current) gainRef.current.gain.setValueAtTime(next ? 0 : 1, ctxRef.current.currentTime);
-      return next;
+    if (getAnalysers || !meterUrl) { if (!getAnalysers) setActive(false); return; }
+    const es = new EventSource(meterUrl);
+    let windowSec = 0.04;
+    const windows: number[][] = [];
+    es.addEventListener("init", (e) => {
+      try {
+        const d = JSON.parse((e as MessageEvent).data) as { windowMs: number; windows: number[][] };
+        windowSec = (d.windowMs || 40) / 1000;
+        windows.length = 0;
+        windows.push(...d.windows);
+        setActive(true);
+      } catch { /* ignore */ }
     });
-  }, []);
+    es.addEventListener("w", (e) => {
+      const p = (e as MessageEvent).data.split(",");
+      windows.push([Number(p[0]), Number(p[1]), Number(p[2]), Number(p[3])]);
+    });
+    sampleRef.current = () => {
+      if (windows.length === 0) return null;
+      const idx = isLive
+        ? windows.length - 1
+        : Math.floor(Math.max(0, (getPositionRef.current?.() ?? 0) + nudgeRef.current) / windowSec);
+      const w = windows[Math.max(0, Math.min(windows.length - 1, idx))];
+      return w ? { lr: w[0], rr: w[1], lp: w[2], rp: w[3] } : null;
+    };
+    setActive(true);
+    return () => { es.close(); sampleRef.current = null; };
+  }, [getAnalysers, meterUrl, isLive]);
+
+  // Run the animation while playing; halt + rest when paused/stopped.
+  useEffect(() => {
+    if (!active) { stopLoop(); return; }
+    if (isPlaying) runLoop();
+    else { stopLoop(); restNeedles(); }
+  }, [active, isPlaying, runLoop, stopLoop, restNeedles]);
+
+  useEffect(() => () => stopLoop(), [stopLoop]);
 
   return (
     <div className="vu-overlay" role="dialog" aria-label="VU meter">
@@ -329,27 +275,19 @@ export function VuMeter({ streamPath, startPositionSeconds, isLive, isPlaying, t
         <div className="vu-footer">
           {title ? <div className="vu-track"><strong>{title}</strong>{subtitle ? <span> — {subtitle}</span> : null}</div> : null}
           <div className="vu-controls">
-            {phase === "nostream" ? (
+            {noSignal ? (
               <p className="vu-status">No signal — the VU meter reads audio played through MiSonos. Sonos-native sources (Spotify, AirPlay, line-in) can’t be measured.</p>
-            ) : phase === "error" ? (
-              <p className="vu-status vu-error">{error}</p>
-            ) : phase === "blocked" ? (
-              <button type="button" className="vu-start" onClick={begin}>▶ Start meter</button>
-            ) : !isLive ? (
+            ) : local ? (
+              <p className="vu-status">This device — perfectly in sync.</p>
+            ) : isLive ? (
+              <p className="vu-status">Live — needles follow the broadcast.</p>
+            ) : (
               <label className="vu-nudge">
                 <span>Sync nudge</span>
                 <input type="range" min={-3} max={3} step={0.1} value={nudge} onChange={(e) => setNudge(Number(e.target.value))} />
                 <span className="vu-nudge-value">{nudge > 0 ? `+${nudge.toFixed(1)}` : nudge.toFixed(1)}s</span>
               </label>
-            ) : (
-              <p className="vu-status">Live — needles follow the broadcast.</p>
             )}
-            {phase === "running" ? (
-              <button type="button" className="vu-mute" onClick={toggleMute} title={muted ? "Play on this device to sync by ear" : "Mute this device"}>
-                {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                <span>{muted ? "Sync by ear" : "Mute"}</span>
-              </button>
-            ) : null}
             <button type="button" className="vu-hide" aria-label="Hide info" title="Hide controls" onClick={() => setFooterOpen(false)}><X size={16} /></button>
           </div>
         </div>

@@ -961,10 +961,18 @@ export function App() {
       ) : null}
       {vuOpen ? (
         <VuMeter
-          streamPath={activeQueueItem?.sourceId && activeQueueItem?.trackId
-            ? `/api/stream/${encodeURIComponent(activeQueueItem.sourceId)}/${encodeURIComponent(activeQueueItem.trackId)}`
+          // Local "this device": tap the already-playing audio. Sonos: read the
+          // bridge-decoded level stream for the active track (no second download).
+          getAnalysers={localMode ? localPlayer.getAnalysers : undefined}
+          meterUrl={!localMode && activeQueueItem?.sourceId && activeQueueItem?.trackId
+            ? `/api/meter/${encodeURIComponent(activeQueueItem.sourceId)}/${encodeURIComponent(activeQueueItem.trackId)}`
             : null}
-          startPositionSeconds={parseSonosTime(nowPlaying?.position)}
+          getPosition={() => {
+            const base = parseSonosTime(nowPlaying?.position);
+            if (nowPlaying?.state !== "PLAYING") return base;
+            const updatedAt = nowPlaying?.updatedAt ? Date.parse(nowPlaying.updatedAt) : NaN;
+            return base + (Number.isFinite(updatedAt) ? Math.max(0, (Date.now() - updatedAt) / 1000) : 0);
+          }}
           isLive={isLiveStream}
           isPlaying={effectivePlaying}
           title={effectiveNowPlaying?.title}
