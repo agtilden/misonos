@@ -42,6 +42,9 @@ export interface Store {
   addPlaylistItems(id: number, items: PlaylistItemInput[]): Promise<PlaylistItem[]>;
   removePlaylistItem(playlistItemId: number): Promise<void>;
   reorderPlaylist(id: number, orderedItemIds: number[]): Promise<PlaylistItem[]>;
+  // Per-playlist resume: remember/forget the track to resume at (by stable identity).
+  setPlaylistResume(id: number, sourceId: string, trackId: string): Promise<void>;
+  clearPlaylistResume(id: number): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -76,10 +79,9 @@ export async function createStore(dbPath: string): Promise<Store> {
       .where("playlist_id", "=", id)
       .orderBy("position", "asc")
       .execute();
-    return {
-      playlist: toPlaylist({ ...playlistRow, item_count: itemRows.length }),
-      items: itemRows.map(toPlaylistItem)
-    };
+    const playlist = toPlaylist({ ...playlistRow, item_count: itemRows.length });
+    playlist.resumeTrackNumber = computeResumeTrackNumber(itemRows, playlistRow.resume_source_id, playlistRow.resume_track_id);
+    return { playlist, items: itemRows.map(toPlaylistItem) };
   };
 
   return {
@@ -342,10 +344,43 @@ export async function createStore(dbPath: string): Promise<Store> {
       });
     },
 
+    async setPlaylistResume(id: number, sourceId: string, trackId: string): Promise<void> {
+      // Intentionally does NOT touch updated_at — resume progress shouldn't reshuffle
+      // the playlist list order on every track change.
+      await db
+        .updateTable("playlist")
+        .set({ resume_source_id: sourceId, resume_track_id: trackId })
+        .where("id", "=", id)
+        .execute();
+    },
+
+    async clearPlaylistResume(id: number): Promise<void> {
+      await db
+        .updateTable("playlist")
+        .set({ resume_source_id: null, resume_track_id: null })
+        .where("id", "=", id)
+        .execute();
+    },
+
     async close(): Promise<void> {
       await db.destroy();
     }
   };
+}
+
+// The 1-based track to resume "Play all" at, or null to start from the top. We
+// resume only when the saved track still exists and is neither the first nor the
+// last track: at the top there's nothing to resume, and at the end the playlist
+// effectively finished — both start over.
+function computeResumeTrackNumber(
+  items: Array<{ source_id: string; track_id: string }>,
+  resumeSourceId: string | null,
+  resumeTrackId: string | null
+): number | null {
+  if (!resumeSourceId || !resumeTrackId) return null;
+  const index = items.findIndex((row) => row.source_id === resumeSourceId && row.track_id === resumeTrackId);
+  if (index <= 0 || index >= items.length - 1) return null;
+  return index + 1;
 }
 
 async function renumberPlaylist(

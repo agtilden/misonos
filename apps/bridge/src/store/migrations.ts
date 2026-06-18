@@ -126,10 +126,24 @@ const m003_favorite_presets: Migration = {
   }
 };
 
+// Per-playlist resume: remember the track a playlist was stopped on (by stable
+// source/track identity) so the next "Play all" picks up where it left off.
+const m004_playlist_resume: Migration = {
+  async up(db: Kysely<unknown>): Promise<void> {
+    await db.schema.alterTable("playlist").addColumn("resume_source_id", "text").execute();
+    await db.schema.alterTable("playlist").addColumn("resume_track_id", "text").execute();
+  },
+  async down(db: Kysely<unknown>): Promise<void> {
+    await db.schema.alterTable("playlist").dropColumn("resume_track_id").execute();
+    await db.schema.alterTable("playlist").dropColumn("resume_source_id").execute();
+  }
+};
+
 const migrations: Record<string, Migration> = {
   "001_init": m001_init,
   "002_library": m002_library,
-  "003_favorite_presets": m003_favorite_presets
+  "003_favorite_presets": m003_favorite_presets,
+  "004_playlist_resume": m004_playlist_resume
 };
 
 export const migrationProvider: MigrationProvider = {

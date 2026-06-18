@@ -1,6 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
-import type { AlarmInput, BridgeEvent, EqPayload, EqPreset, Favorite, PlaybackMode, RecentlyViewedItem, RepeatMode, SourceItemKind, TransportAction, VolumePayload } from "@misonos/sonos-protocol";
+import type { AlarmInput, BridgeEvent, EqPayload, EqPreset, Favorite, NowPlaying, PlaybackMode, RecentlyViewedItem, RepeatMode, SourceItemKind, TransportAction, VolumePayload } from "@misonos/sonos-protocol";
 import type { BridgeConfig } from "./config.js";
 import { SonosEventManager } from "./sonosEvents.js";
 import { SonosService } from "./sonosService.js";
@@ -28,6 +28,24 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       client.write(`event: ${event.type}\n`);
       client.write(`data: ${JSON.stringify(event)}\n\n`);
     }
+  };
+
+  // Per-group "we're playing playlist N" sessions, set when a playlist is played in
+  // replace mode. While a session is active, transport events persist the resume
+  // point (the track currently playing) so the next "Play all" picks up there. Keyed
+  // by groupId; a session is silently dropped once the group plays something else.
+  const playlistSessions = new Map<string, { playlistId: number; refs: Array<{ sourceId: string; trackId: string }> }>();
+
+  // On a transport event for `groupId`, if a playlist session is active and the
+  // current track belongs to it, remember that track as the resume point.
+  const captureResume = async (groupId: string, nowPlaying: NowPlaying): Promise<void> => {
+    const session = playlistSessions.get(groupId);
+    if (!session) return;
+    const ref = service.refFromQueueUri(nowPlaying.uri);
+    if (!ref) return;
+    const onPlaylistTrack = session.refs.some((r) => r.sourceId === ref.sourceId && r.trackId === ref.trackId);
+    if (!onPlaylistTrack) return; // off the playlist (ad-hoc track) — leave resume untouched
+    await store.setPlaylistResume(session.playlistId, ref.sourceId, ref.trackId);
   };
 
   service.onSnapshot = (snapshot) => {
@@ -578,12 +596,23 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
 
     const playlistPlayMatch = url.pathname.match(/^\/api\/playlists\/(\d+)\/play$/);
     if (request.method === "POST" && playlistPlayMatch) {
-      const body = await readJson<{ groupId: string; mode?: PlaybackMode }>(request);
+      const body = await readJson<{ groupId: string; mode?: PlaybackMode; fromStart?: boolean }>(request);
       if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
-      const result = await store.getPlaylist(Number(playlistPlayMatch[1]));
+      const playlistId = Number(playlistPlayMatch[1]);
+      const result = await store.getPlaylist(playlistId);
       if (!result || result.items.length === 0) return json(response, { error: "Playlist is empty" }, 400);
       const refs = result.items.map((item) => ({ sourceId: item.sourceId, trackId: item.trackId }));
-      return json(response, await service.playTrackRefs(refs, body.groupId, body.mode ?? "replace"));
+      const mode = body.mode ?? "replace";
+      // Resume only applies to a replace-mode "Play all"; "from start" overrides it.
+      const startTrack = mode === "replace" && !body.fromStart ? (result.playlist.resumeTrackNumber ?? 1) : 1;
+      const nowPlaying = await service.playTrackRefs(refs, body.groupId, mode, startTrack);
+      if (mode === "replace") {
+        // Track progress from here so the resume point follows playback.
+        playlistSessions.set(body.groupId, { playlistId, refs });
+        if (body.fromStart) await store.clearPlaylistResume(playlistId);
+        await captureResume(body.groupId, nowPlaying);
+      }
+      return json(response, nowPlaying);
     }
 
     return json(response, { error: "Not found" }, 404);
@@ -619,6 +648,7 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       }
       if (groupId) {
         const nowPlaying = await service.nowPlayingSettled(groupId);
+        await captureResume(groupId, nowPlaying);
         sendEvent({ type: "now-playing", payload: nowPlaying, at: new Date().toISOString() });
       }
     } catch (error) {

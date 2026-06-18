@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, RotateCcw, Star, Trash2 } from "lucide-react";
 import type { Favorite, Playlist, PlaylistItem, PlaybackMode, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
 import { bridgeApi } from "./api.js";
 import { GroupDropdown } from "./GroupDropdown.js";
@@ -151,13 +151,16 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     await refresh();
   };
 
-  const playPlaylist = async (playlist: Playlist, mode: PlaybackMode) => {
+  const playPlaylist = async (playlist: Playlist, mode: PlaybackMode, fromStart = false) => {
     const groupId = requireGroup();
     if (!groupId) return;
     setBusy(true);
     try {
-      await bridgeApi.playPlaylist(playlist.id, groupId, mode);
-      setStatus({ ok: true, message: `${verb(mode)} “${playlist.name}”.` });
+      await bridgeApi.playPlaylist(playlist.id, groupId, mode, fromStart);
+      const resumed = mode === "replace" && !fromStart && playlist.resumeTrackNumber;
+      setStatus({ ok: true, message: resumed ? `Resumed “${playlist.name}” at track ${playlist.resumeTrackNumber}.` : `${verb(mode)} “${playlist.name}”.` });
+      // Resume point moved server-side — refresh the open view so the hint stays accurate.
+      if (open?.playlist.id === playlist.id) setOpen(await bridgeApi.playlist(playlist.id));
     } catch (err) {
       setStatus({ ok: false, message: err instanceof Error ? err.message : "Could not play playlist" });
     } finally {
@@ -226,8 +229,13 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
         </div>
         <div className="library-playlist-actions">
           <button type="button" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "replace")}>
-            <Play size={15} /> Play all
+            <Play size={15} /> {open.playlist.resumeTrackNumber ? `Resume (track ${open.playlist.resumeTrackNumber})` : "Play all"}
           </button>
+          {open.playlist.resumeTrackNumber ? (
+            <button type="button" className="ghost" title="Play from the first track" disabled={busy} onClick={() => void playPlaylist(open.playlist, "replace", true)}>
+              <RotateCcw size={15} /> From start
+            </button>
+          ) : null}
           <button type="button" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "end")}>
             <ListEnd size={15} /> Queue all
           </button>

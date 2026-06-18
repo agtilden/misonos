@@ -180,6 +180,49 @@ describe("bridge store", () => {
     }
   });
 
+  it("computes per-playlist resume by stable identity, surviving reorders", async () => {
+    const store = await createStore(":memory:");
+    try {
+      const pl = await store.createPlaylist("Mix");
+      const items = await store.addPlaylistItems(pl.id, [
+        { sourceId: "lma", trackId: "a", title: "A" },
+        { sourceId: "lma", trackId: "b", title: "B" },
+        { sourceId: "lma", trackId: "c", title: "C" },
+        { sourceId: "lma", trackId: "d", title: "D" }
+      ]);
+      // No resume saved → play from the top.
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBeNull();
+
+      // Stopped on track "c" (index 2) → resume at track 3 (1-based).
+      await store.setPlaylistResume(pl.id, "lma", "c");
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBe(3);
+
+      // Reorder so "c" moves to the front; resume follows the track, not the slot.
+      const [a, b, c, d] = items;
+      await store.reorderPlaylist(pl.id, [d.id, c.id, a.id, b.id]);
+      // "c" is now index 1 → track 2.
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBe(2);
+
+      // Resume at the first or last track means "nothing to resume" → from the top.
+      await store.setPlaylistResume(pl.id, "lma", "d"); // d is now index 0
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBeNull();
+      await store.setPlaylistResume(pl.id, "lma", "b"); // b is now index 3 (last)
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBeNull();
+
+      // A removed resume track falls back to the top; clearing does too.
+      await store.setPlaylistResume(pl.id, "lma", "a"); // a is index 2 → track 3
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBe(3);
+      await store.removePlaylistItem(a.id);
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBeNull();
+
+      await store.setPlaylistResume(pl.id, "lma", "c");
+      await store.clearPlaylistResume(pl.id);
+      expect((await store.getPlaylist(pl.id))?.playlist.resumeTrackNumber).toBeNull();
+    } finally {
+      await store.close();
+    }
+  });
+
   it("cascade-deletes playlist items when the playlist is deleted", async () => {
     const store = await createStore(":memory:");
     try {
