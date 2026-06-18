@@ -2707,6 +2707,14 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
             ref={isActive ? activeItemRef : undefined}
             className={isActive ? "queue-item active" : "queue-item"}
           >
+            <div className="queue-reorder">
+              <button type="button" title="Move up" aria-label={`Move ${item.title} up`} disabled={index === 0} onClick={() => onReorder(index, index - 1)}>
+                <ChevronUp size={15} />
+              </button>
+              <button type="button" title="Move down" aria-label={`Move ${item.title} down`} disabled={index === queue.length - 1} onClick={() => onReorder(index, index + 1)}>
+                <ChevronDown size={15} />
+              </button>
+            </div>
             <button type="button" className="queue-item-main" onClick={() => onPlay(index)} aria-current={isActive ? "true" : undefined}>
               <span className="queue-indicator" aria-hidden="true">
                 {isActive ? <AudioLines size={16} className={isPlaying ? "queue-indicator-active playing" : "queue-indicator-active"} /> : <span className="queue-track-number">{index + 1}</span>}
@@ -2729,14 +2737,6 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
                 <Heart size={15} fill={isFavorite(item) ? "currentColor" : "none"} />
               </button>
             ) : null}
-            <div className="queue-reorder">
-              <button type="button" title="Move up" aria-label={`Move ${item.title} up`} disabled={index === 0} onClick={() => onReorder(index, index - 1)}>
-                <ChevronUp size={15} />
-              </button>
-              <button type="button" title="Move down" aria-label={`Move ${item.title} down`} disabled={index === queue.length - 1} onClick={() => onReorder(index, index + 1)}>
-                <ChevronDown size={15} />
-              </button>
-            </div>
             <button type="button" className="queue-remove" title="Remove from queue" aria-label={`Remove ${item.title} from queue`} onClick={() => onRemove(index)}>
               <X size={16} />
             </button>
