@@ -330,6 +330,32 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
         onChange={(event) => setQuery(event.target.value)}
       />
 
+      {recentQueues.length > 0 ? (
+        <CollapsibleSection title="Recent queues" count={recentQueues.length} open={!collapsed.recentQueues} onToggle={() => toggleSection("recentQueues")}>
+          {filteredRecentQueues.length === 0 ? (
+            <div className="empty-panel">No recent queues match “{query.trim()}”.</div>
+          ) : (
+            <ul className="library-track-list">
+              {filteredRecentQueues.map((rq) => (
+                <li key={rq.id} className="library-track">
+                  <div className="browse-track-meta">
+                    <span>{rq.title}</span>
+                    <small>
+                      {rq.itemCount} {rq.itemCount === 1 ? "track" : "tracks"} · {relativeTime(rq.capturedAt)}
+                      {rq.startTrack && rq.startTrack > 1 ? ` · was on track ${rq.startTrack}` : ""}
+                    </small>
+                  </div>
+                  <div className="browse-actions">
+                    <button type="button" className="browse-action" title="Restore this queue" aria-label="Restore queue" disabled={busy} onClick={() => void restoreQueue(rq)}><RotateCcw size={14} /></button>
+                    <button type="button" className="browse-action" title="Remove" aria-label="Remove recent queue" onClick={() => void dismissQueue(rq)}><Trash2 size={14} /></button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CollapsibleSection>
+      ) : null}
+
       <CollapsibleSection title="Favorites" count={favs.favorites.length} open={!collapsed.favorites} onToggle={() => toggleSection("favorites")}>
         {favs.favorites.length === 0 ? (
           <div className="empty-panel">No favorites yet. Tap the ⋯ menu on a track or album to favorite it.</div>
@@ -370,32 +396,6 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
           ))
         )}
       </CollapsibleSection>
-
-      {recentQueues.length > 0 ? (
-        <CollapsibleSection title="Recent queues" count={recentQueues.length} open={!collapsed.recentQueues} onToggle={() => toggleSection("recentQueues")}>
-          {filteredRecentQueues.length === 0 ? (
-            <div className="empty-panel">No recent queues match “{query.trim()}”.</div>
-          ) : (
-            <ul className="library-track-list">
-              {filteredRecentQueues.map((rq) => (
-                <li key={rq.id} className="library-track">
-                  <div className="browse-track-meta">
-                    <span>{rq.title}</span>
-                    <small>
-                      {rq.itemCount} {rq.itemCount === 1 ? "track" : "tracks"} · {relativeTime(rq.capturedAt)}
-                      {rq.startTrack && rq.startTrack > 1 ? ` · was on track ${rq.startTrack}` : ""}
-                    </small>
-                  </div>
-                  <div className="browse-actions">
-                    <button type="button" className="browse-action" title="Restore this queue" aria-label="Restore queue" disabled={busy} onClick={() => void restoreQueue(rq)}><RotateCcw size={14} /></button>
-                    <button type="button" className="browse-action" title="Remove" aria-label="Remove recent queue" onClick={() => void dismissQueue(rq)}><Trash2 size={14} /></button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CollapsibleSection>
-      ) : null}
 
       <CollapsibleSection title="Playlists" count={playlists.length} open={!collapsed.playlists} onToggle={() => toggleSection("playlists")}>
         <div className="add-to-playlist-new">
