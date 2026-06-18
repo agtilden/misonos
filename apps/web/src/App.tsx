@@ -169,6 +169,12 @@ export function App() {
   // while a regular track/album (Grateful Dead, YouTube, a podcast) is playing.
   const showPresets = favorites.presets.length > 0 && (!effectiveNowPlaying || isLiveStream);
   const activeQueueItem = effectiveActiveIndex >= 0 ? effectiveQueue[effectiveActiveIndex] : undefined;
+  // VU metering needs a real, finite source: locally we tap the device audio; on Sonos
+  // we meter a decoded track by (source, track). A live stream (radio) has neither, so
+  // don't offer the meter for it.
+  const vuSupported = localMode
+    ? localPlayer.active
+    : !isLiveStream && !!activeQueueItem?.sourceId && !!activeQueueItem?.trackId;
   const activeItemFavorited = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isFavorited(activeQueueItem.sourceId, activeQueueItem.trackId));
   const activeItemPreset = !!(activeQueueItem?.sourceId && activeQueueItem?.trackId && favorites.isPreset(activeQueueItem.sourceId, activeQueueItem.trackId));
   const activeItemPinnable = !!(selectedGroup && activeQueueItem?.sourceId && activeQueueItem?.trackId);
@@ -345,6 +351,8 @@ export function App() {
       .then((list) => setRecentNudge(list.length ? { id: list[0].id, title: list[0].title, itemCount: list[0].itemCount } : null))
       .catch(() => { /* non-fatal */ });
   }, [nowPlaying, selectedGroup?.coordinatorId, queue.length, localMode]);
+
+  useEffect(() => { if (vuOpen && !vuSupported) setVuOpen(false); }, [vuOpen, vuSupported]);
 
   const restoreRecentQueue = async () => {
     if (!recentNudge || !selectedGroup) return;
@@ -831,9 +839,11 @@ export function App() {
                 </div>
               )}
             </button>
-            <button type="button" className="artwork-vu" title="VU meter" aria-label="Open VU meter" onClick={() => setVuOpen(true)}>
-              <Gauge size={18} />
-            </button>
+            {vuSupported ? (
+              <button type="button" className="artwork-vu" title="VU meter" aria-label="Open VU meter" onClick={() => setVuOpen(true)}>
+                <Gauge size={18} />
+              </button>
+            ) : null}
           </div>
           <div className="track-copy">
             <p className="eyebrow">{localMode ? "ON THIS DEVICE" : effectiveNowPlaying?.state ?? "UNKNOWN"}</p>
