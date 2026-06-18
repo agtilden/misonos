@@ -157,6 +157,12 @@ export const bridgeApi = {
     request<void>("/api/recently-viewed", { method: "POST", body: JSON.stringify(item) }),
   recentlyPlayed: (limit?: number) =>
     request<RecentlyPlayedItem[]>(`/api/recently-played${limit ? `?limit=${limit}` : ""}`),
+  playRecentlyPlayed: (groupId: string, mode: PlaybackMode) =>
+    request<NowPlaying>("/api/recently-played/play", { method: "POST", body: JSON.stringify({ groupId, mode }) }),
+  removeRecentlyPlayed: (sourceId: string, trackId: string) =>
+    request<void>("/api/recently-played/remove", { method: "POST", body: JSON.stringify({ sourceId, trackId }) }),
+  clearRecentlyPlayed: () =>
+    request<void>("/api/recently-played/clear", { method: "POST", body: "{}" }),
   eqPresets: () => request<EqPreset[]>("/api/eq-presets"),
   createEqPreset: (input: Omit<EqPreset, "id" | "createdAt">) =>
     request<EqPreset>("/api/eq-presets", { method: "POST", body: JSON.stringify(input) }),

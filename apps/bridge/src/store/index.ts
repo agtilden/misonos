@@ -44,6 +44,8 @@ export interface Store {
   recordRecentlyViewed(input: Omit<RecentlyViewedItem, "viewedAt">): Promise<void>;
   listRecentlyPlayed(limit?: number): Promise<RecentlyPlayedItem[]>;
   recordRecentlyPlayed(input: Omit<RecentlyPlayedItem, "playedAt">): Promise<void>;
+  deleteRecentlyPlayed(sourceId: string, trackId: string): Promise<void>;
+  clearRecentlyPlayed(): Promise<void>;
   listEqPresets(): Promise<EqPreset[]>;
   createEqPreset(input: Omit<EqPreset, "id" | "createdAt">): Promise<EqPreset>;
   deleteEqPreset(id: number): Promise<void>;
@@ -204,6 +206,14 @@ export async function createStore(dbPath: string): Promise<Store> {
           )
           .execute();
       });
+    },
+
+    async deleteRecentlyPlayed(sourceId: string, trackId: string): Promise<void> {
+      await db.deleteFrom("recently_played").where("source_id", "=", sourceId).where("track_id", "=", trackId).execute();
+    },
+
+    async clearRecentlyPlayed(): Promise<void> {
+      await db.deleteFrom("recently_played").execute();
     },
 
     async listEqPresets(): Promise<EqPreset[]> {

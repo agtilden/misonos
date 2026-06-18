@@ -507,6 +507,29 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, await store.listRecentlyPlayed(Number.isNaN(limit) ? undefined : limit));
     }
 
+    // Play the recently-played history as a queue. Stations (kind "radio") are skipped —
+    // a live stream isn't a queueable track.
+    if (url.pathname === "/api/recently-played/play" && request.method === "POST") {
+      const body = await readJson<{ groupId: string; mode?: PlaybackMode }>(request);
+      if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
+      const items = await store.listRecentlyPlayed();
+      const refs = items.filter((i) => i.kind === "track").map((i) => ({ sourceId: i.sourceId, trackId: i.trackId }));
+      if (refs.length === 0) return json(response, { error: "No tracks to play" }, 400);
+      return json(response, await service.playTrackRefs(refs, body.groupId, body.mode ?? "replace"));
+    }
+
+    if (url.pathname === "/api/recently-played/remove" && request.method === "POST") {
+      const body = await readJson<{ sourceId: string; trackId: string }>(request);
+      if (!body.sourceId || !body.trackId) return json(response, { error: "Missing sourceId or trackId" }, 400);
+      await store.deleteRecentlyPlayed(body.sourceId, body.trackId);
+      return empty(response, 204);
+    }
+
+    if (url.pathname === "/api/recently-played/clear" && request.method === "POST") {
+      await store.clearRecentlyPlayed();
+      return empty(response, 204);
+    }
+
     if (url.pathname === "/api/eq-presets") {
       if (request.method === "GET") return json(response, await store.listEqPresets());
       if (request.method === "POST") {

@@ -58,9 +58,13 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     setRecentQueues(await bridgeApi.recentQueues(coordinatorUuid).catch(() => []));
   }, [coordinatorUuid]);
 
+  const refreshRecentlyPlayed = useCallback(async () => {
+    setRecentlyPlayed(await bridgeApi.recentlyPlayed().catch(() => []));
+  }, []);
+
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { void refreshRecentQueues(); }, [refreshRecentQueues]);
-  useEffect(() => { void bridgeApi.recentlyPlayed().then(setRecentlyPlayed).catch(() => { /* non-fatal */ }); }, []);
+  useEffect(() => { void refreshRecentlyPlayed(); }, [refreshRecentlyPlayed]);
   useEffect(() => { void bridgeApi.listSources().then(setSources).catch(() => { /* non-fatal */ }); }, []);
 
   const sourceName = useCallback(
@@ -236,6 +240,32 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     }
   };
 
+  const playAllRecentlyPlayed = async (mode: PlaybackMode) => {
+    const groupId = requireGroup();
+    if (!groupId) return;
+    setBusy(true);
+    try {
+      await bridgeApi.playRecentlyPlayed(groupId, mode);
+      setStatus({ ok: true, message: mode === "replace" ? "Playing recently played." : `${verb(mode)} recently played.` });
+    } catch (err) {
+      setStatus({ ok: false, message: err instanceof Error ? err.message : "Action failed" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeRecentlyPlayed = async (item: RecentlyPlayedItem) => {
+    await bridgeApi.removeRecentlyPlayed(item.sourceId, item.trackId);
+    await refreshRecentlyPlayed();
+  };
+
+  const clearRecentlyPlayed = async () => {
+    const ok = await dialogs.confirm({ message: "Clear all recently played?", confirmLabel: "Clear" });
+    if (!ok) return;
+    await bridgeApi.clearRecentlyPlayed();
+    await refreshRecentlyPlayed();
+  };
+
   const openPlaylist = async (id: number) => {
     setOpen(await bridgeApi.playlist(id));
   };
@@ -381,6 +411,20 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
 
       {recentlyPlayed.length > 0 ? (
         <CollapsibleSection title="Recently played" count={recentlyPlayed.length} open={!collapsed.recentlyPlayed} onToggle={() => toggleSection("recentlyPlayed")}>
+          <div className="library-playlist-actions">
+            <button type="button" title="Play all recently played as a queue" disabled={busy} onClick={() => void playAllRecentlyPlayed("replace")}>
+              <Play size={15} /> Play all
+            </button>
+            <button type="button" title="Play after the current track (keeps the queue)" disabled={busy} onClick={() => void playAllRecentlyPlayed("next")}>
+              <ListPlus size={15} /> Play next
+            </button>
+            <button type="button" title="Add to the end of the queue (keeps the queue)" disabled={busy} onClick={() => void playAllRecentlyPlayed("end")}>
+              <ListEnd size={15} /> Add to end
+            </button>
+            <button type="button" className="ghost" title="Clear recently played" disabled={busy} onClick={() => void clearRecentlyPlayed()}>
+              <Trash2 size={15} /> Clear
+            </button>
+          </div>
           {filteredRecentlyPlayed.length === 0 ? (
             <div className="empty-panel">No recently played match “{query.trim()}”.</div>
           ) : (
@@ -397,6 +441,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
                   <div className="browse-actions">
                     <button type="button" className="browse-action" title="Play now" aria-label="Play now" disabled={busy} onClick={() => void playRecentlyPlayed(item, "replace")}><Play size={14} /></button>
                     <button type="button" className="browse-action" title="Add to end" aria-label="Add to end" disabled={busy} onClick={() => void playRecentlyPlayed(item, "end")}><ListEnd size={14} /></button>
+                    <button type="button" className="browse-action" title="Remove" aria-label="Remove from recently played" onClick={() => void removeRecentlyPlayed(item)}><Trash2 size={14} /></button>
                   </div>
                 </li>
               ))}
