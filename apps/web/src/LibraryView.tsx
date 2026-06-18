@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, RotateCcw, Star, Trash2 } from "lucide-react";
 import type { Favorite, Playlist, PlaylistItem, PlaybackMode, RecentQueue, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
 import { bridgeApi } from "./api.js";
@@ -29,6 +29,16 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const [renameText, setRenameText] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  // Collapsed Library sections, persisted so the choice sticks across visits. Default
+  // open; a section is collapsed when its key is truthy here.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(LIBRARY_COLLAPSE_KEY) ?? "{}"); } catch { return {}; }
+  });
+  const toggleSection = (key: string) => setCollapsed((prev) => {
+    const next = { ...prev, [key]: !prev[key] };
+    try { localStorage.setItem(LIBRARY_COLLAPSE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    return next;
+  });
 
   const groupOptions = buildGroupOptions(groups);
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupId) ?? groupOptions[0];
@@ -317,8 +327,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
         onChange={(event) => setQuery(event.target.value)}
       />
 
-      <div className="library-section">
-        <h3>Favorites</h3>
+      <CollapsibleSection title="Favorites" count={favs.favorites.length} open={!collapsed.favorites} onToggle={() => toggleSection("favorites")}>
         {favs.favorites.length === 0 ? (
           <div className="empty-panel">No favorites yet. Tap the ⋯ menu on a track or album to favorite it.</div>
         ) : favoritesByProvider.length === 0 ? (
@@ -357,11 +366,10 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
             </div>
           ))
         )}
-      </div>
+      </CollapsibleSection>
 
       {recentQueues.length > 0 ? (
-        <div className="library-section">
-          <h3>Recent queues</h3>
+        <CollapsibleSection title="Recent queues" count={recentQueues.length} open={!collapsed.recentQueues} onToggle={() => toggleSection("recentQueues")}>
           {filteredRecentQueues.length === 0 ? (
             <div className="empty-panel">No recent queues match “{query.trim()}”.</div>
           ) : (
@@ -383,11 +391,10 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
               ))}
             </ul>
           )}
-        </div>
+        </CollapsibleSection>
       ) : null}
 
-      <div className="library-section">
-        <h3>Playlists</h3>
+      <CollapsibleSection title="Playlists" count={playlists.length} open={!collapsed.playlists} onToggle={() => toggleSection("playlists")}>
         <div className="add-to-playlist-new">
           <input type="text" placeholder="New playlist name…" value={newName} maxLength={60} disabled={busy}
             onChange={(event) => setNewName(event.target.value)}
@@ -422,8 +429,32 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
             ))}
           </ul>
         )}
-      </div>
+      </CollapsibleSection>
     </section>
+  );
+}
+
+const LIBRARY_COLLAPSE_KEY = "misonos.library.collapsed";
+
+// A Library top-level section with a click-to-collapse header. Sections are
+// independent (collapse Favorites to focus on Playlists, etc.); add future sections
+// — e.g. Recently played, radio Presets — by dropping another <CollapsibleSection>.
+function CollapsibleSection({ title, count, open, onToggle, children }: {
+  title: string;
+  count?: number;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`library-section${open ? "" : " collapsed"}`}>
+      <button type="button" className="library-section-header" aria-expanded={open} onClick={onToggle}>
+        <ChevronDown size={16} className={`library-section-chevron${open ? " open" : ""}`} aria-hidden="true" />
+        <h3>{title}</h3>
+        {typeof count === "number" ? <span className="library-section-count">{count}</span> : null}
+      </button>
+      {open ? children : null}
+    </div>
   );
 }
 

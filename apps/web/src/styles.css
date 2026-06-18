@@ -2840,9 +2840,47 @@ small {
 }
 
 .library .library-section h3 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 0.95rem;
   color: #d7d2c4;
+}
+
+.library-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0;
+  margin-bottom: 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.library-section.collapsed .library-section-header {
+  margin-bottom: 0;
+}
+
+.library-section-chevron {
+  color: #91d3c4;
+  transition: transform 0.15s ease;
+  transform: rotate(-90deg); /* collapsed: pointing right */
+}
+
+.library-section-chevron.open {
+  transform: rotate(0deg); /* expanded: pointing down */
+}
+
+.library-section-count {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(145, 211, 196, 0.15);
+  color: #91d3c4;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .library-group {
