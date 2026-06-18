@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, Blend, Check, Gauge, Heart, Info, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, ChevronDown, ChevronUp, Gauge, Heart, Info, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Trash2, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -176,6 +176,7 @@ export function App() {
   const onPrimaryMute = () => { if (localMode) localPlayer.toggleMute(); else void togglePrimaryMute(); };
   const onQueuePlay = (index: number) => { if (localMode) localPlayer.playIndex(index); else void playQueueItem(index + 1); };
   const onQueueRemove = (index: number) => { if (localMode) localPlayer.removeIndex(index); else void removeQueueItem(index); };
+  const onQueueReorder = (from: number, to: number) => { if (localMode) localPlayer.reorderIndex(from, to); else void reorderQueueItem(from, to); };
 
   const applySnapshot = useCallback((snapshot: BridgeSnapshot) => {
     setGroups((current) => (groupsTopologyKey(current) === groupsTopologyKey(snapshot.groups) ? current : snapshot.groups));
@@ -398,6 +399,17 @@ export function App() {
     }
   };
 
+  const clearQueueItems = async () => {
+    if (!(await dialogs.confirm({ message: "Clear the queue?", confirmLabel: "Clear" }))) return;
+    if (localMode) { localPlayer.stop(); return; }
+    if (!selectedGroup) return;
+    try {
+      setQueue(await bridgeApi.clearQueue(selectedGroup.id));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not clear the queue");
+    }
+  };
+
   const setZoneVolume = async (zoneId: string, volume: number) => {
     const previous = zoneVolumes[zoneId]?.volume;
     if (!(await confirmVolumeJump(previous, volume))) return;
@@ -465,6 +477,24 @@ export function App() {
   const removeQueueItem = async (index: number) => {
     if (!selectedGroup) return;
     setQueue(await bridgeApi.removeQueueTrack(selectedGroup.id, index));
+  };
+
+  const reorderQueueItem = async (from: number, to: number) => {
+    if (!selectedGroup || from === to) return;
+    // Optimistic: reflect the move immediately, then reconcile with the speaker.
+    setQueue((current) => {
+      if (from < 0 || to < 0 || from >= current.length || to >= current.length) return current;
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    try {
+      setQueue(await bridgeApi.reorderQueueTrack(selectedGroup.id, from, to));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not reorder the queue");
+      void loadQueue(selectedGroup.id);
+    }
   };
 
   const queueItemFavorited = (item: QueueItem): boolean =>
@@ -935,6 +965,16 @@ export function App() {
               >
                 <Plus size={16} />
               </button>
+              <button
+                className="icon-button compact"
+                type="button"
+                title="Clear queue"
+                aria-label="Clear queue"
+                disabled={effectiveQueue.length === 0 || (!localMode && !selectedGroup)}
+                onClick={() => void clearQueueItems()}
+              >
+                <Trash2 size={16} />
+              </button>
               <span>{effectiveQueue.length}</span>
             </div>
           </div>
@@ -954,6 +994,7 @@ export function App() {
               isPlaying={effectivePlaying}
               onPlay={(index) => onQueuePlay(index)}
               onRemove={(index) => onQueueRemove(index)}
+              onReorder={onQueueReorder}
               isFavorite={queueItemFavorited}
               onFavorite={(item) => void toggleQueueFavorite(item)}
             />
@@ -2625,11 +2666,12 @@ interface QueueListProps {
   isPlaying: boolean;
   onPlay: (index: number) => void;
   onRemove: (index: number) => void;
+  onReorder: (from: number, to: number) => void;
   isFavorite: (item: QueueItem) => boolean;
   onFavorite: (item: QueueItem) => void;
 }
 
-function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, isFavorite, onFavorite }: QueueListProps) {
+function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder, isFavorite, onFavorite }: QueueListProps) {
   const listRef = useRef<HTMLOListElement | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
 
@@ -2687,6 +2729,14 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, isFavorite
                 <Heart size={15} fill={isFavorite(item) ? "currentColor" : "none"} />
               </button>
             ) : null}
+            <div className="queue-reorder">
+              <button type="button" title="Move up" aria-label={`Move ${item.title} up`} disabled={index === 0} onClick={() => onReorder(index, index - 1)}>
+                <ChevronUp size={15} />
+              </button>
+              <button type="button" title="Move down" aria-label={`Move ${item.title} down`} disabled={index === queue.length - 1} onClick={() => onReorder(index, index + 1)}>
+                <ChevronDown size={15} />
+              </button>
+            </div>
             <button type="button" className="queue-remove" title="Remove from queue" aria-label={`Remove ${item.title} from queue`} onClick={() => onRemove(index)}>
               <X size={16} />
             </button>

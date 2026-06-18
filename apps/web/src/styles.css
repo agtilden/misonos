@@ -1734,6 +1734,29 @@ h2 {
   cursor: pointer;
 }
 
+.queue-reorder {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.queue-reorder button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 20px;
+  border: 1px solid rgba(242, 240, 232, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #aeb4ad;
+  cursor: pointer;
+}
+
+.queue-reorder button:first-child { border-radius: 8px 8px 0 0; }
+.queue-reorder button:last-child { border-radius: 0 0 8px 8px; border-top: none; }
+.queue-reorder button:hover:not(:disabled) { color: #f2f0e8; }
+.queue-reorder button:disabled { opacity: 0.35; cursor: default; }
+
 .queue-remove:hover {
   color: #ff8a80;
   border-color: rgba(255, 138, 128, 0.5);
@@ -2750,6 +2773,19 @@ small {
 .library-group .topbar-group {
   min-width: 160px;
 }
+
+.library-search {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(242, 240, 232, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f2f0e8;
+  font-size: 0.92rem;
+}
+
+.library-search::placeholder { color: #8b908a; }
 
 .library-provider + .library-provider {
   margin-top: 14px;

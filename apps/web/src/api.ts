@@ -67,6 +67,13 @@ export const bridgeApi = {
       method: "POST",
       body: JSON.stringify({ index })
     }),
+  clearQueue: (groupId: string) =>
+    request<QueueItem[]>(`/api/groups/${encodeURIComponent(groupId)}/queue/clear`, { method: "POST", body: "{}" }),
+  reorderQueueTrack: (groupId: string, fromIndex: number, toIndex: number) =>
+    request<QueueItem[]>(`/api/groups/${encodeURIComponent(groupId)}/queue/reorder`, {
+      method: "POST",
+      body: JSON.stringify({ fromIndex, toIndex })
+    }),
   removeQueueTrack: (groupId: string, index: number) =>
     request<QueueItem[]>(`/api/groups/${encodeURIComponent(groupId)}/queue/remove`, {
       method: "POST",

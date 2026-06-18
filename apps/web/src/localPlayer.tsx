@@ -36,6 +36,7 @@ interface LocalPlayerApi {
   seek: (seconds: number) => void;
   playIndex: (index: number) => void;
   removeIndex: (index: number) => void;
+  reorderIndex: (from: number, to: number) => void;
   setVolume: (volume: number) => void;
   toggleMute: () => void;
   stop: () => void;
@@ -135,6 +136,23 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
       setIndex((i) => i - 1);
     }
   }, [queue, index, loadAndPlay]);
+
+  const reorderIndex = useCallback((from: number, to: number) => {
+    setQueue((prev) => {
+      if (from === to || from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    // Keep the active index pointing at the same track as it shifts.
+    setIndex((cur) => {
+      if (from === cur) return to;
+      if (from < cur && to >= cur) return cur - 1;
+      if (from > cur && to <= cur) return cur + 1;
+      return cur;
+    });
+  }, []);
 
   const setVolume = useCallback((value: number) => {
     const clamped = Math.max(0, Math.min(100, value));
@@ -236,9 +254,9 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   const api = useMemo<LocalPlayerApi>(() => ({
     active: queue.length > 0,
     playing, nowPlaying, queue: queueItems, activeIndex: index, position, duration, volume, muted,
-    enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop, getAnalysers
+    enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, reorderIndex, setVolume, toggleMute, stop, getAnalysers
   }), [queue.length, playing, nowPlaying, queueItems, index, position, duration, volume, muted,
-      enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, setVolume, toggleMute, stop, getAnalysers]);
+      enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, reorderIndex, setVolume, toggleMute, stop, getAnalysers]);
 
   return (
     <LocalPlayerContext.Provider value={api}>
