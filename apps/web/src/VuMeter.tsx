@@ -115,9 +115,10 @@ interface VuMeterProps {
 }
 
 interface Spring { angle: number; vel: number }
+type Phase = "nostream" | "running" | "blocked" | "error";
 
 export function VuMeter({ streamPath, startPositionSeconds, isLive, title, subtitle, onClose }: VuMeterProps) {
-  const [started, setStarted] = useState(false);
+  const [phase, setPhase] = useState<Phase>(streamPath ? "blocked" : "nostream");
   const [error, setError] = useState<string | null>(null);
   const [nudge, setNudge] = useState(0);
 
@@ -143,8 +144,76 @@ export function VuMeter({ streamPath, startPositionSeconds, isLive, title, subti
     analysersRef.current = [];
   }, []);
 
-  const start = useCallback(async () => {
-    if (!streamPath) return;
+  const runLoop = useCallback(() => {
+    if (rafRef.current !== null) return;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      for (const a of analysersRef.current) {
+        a.node.getFloatTimeDomainData(a.data as Float32Array<ArrayBuffer>);
+        let sum = 0;
+        let peak = 0;
+        for (let i = 0; i < a.data.length; i++) {
+          const v = a.data[i];
+          sum += v * v;
+          const abs = v < 0 ? -v : v;
+          if (abs > peak) peak = abs;
+        }
+        const rms = Math.sqrt(sum / a.data.length);
+        const vu = 20 * Math.log10(Math.max(rms, 1e-7)) - ZERO_VU_DBFS;
+        const target = vuToAngle(vu);
+        const acc = STIFFNESS * (target - a.spring.angle) - DAMPING * a.spring.vel;
+        a.spring.vel += acc * dt;
+        a.spring.angle += a.spring.vel * dt;
+        a.needle.current?.setAttribute("transform", `rotate(${a.spring.angle.toFixed(2)} ${PIVOT_X} ${PIVOT_Y})`);
+        const peakVu = 20 * Math.log10(Math.max(peak, 1e-7)) - ZERO_VU_DBFS;
+        if (peakVu > 0) a.peakAt = now;
+        a.led.current?.setAttribute("opacity", now - a.peakAt < 900 ? "1" : "0.12");
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
+
+  // Resume the (already-built) audio graph and begin metering. Called both
+  // automatically (effect) and from the Start button when autoplay was blocked.
+  // play()/resume() are kicked off synchronously so a user gesture still counts.
+  const begin = useCallback(() => {
+    const ctx = ctxRef.current;
+    const el = elRef.current;
+    if (!ctx || !el) return;
+    Promise.all([ctx.resume(), el.play()])
+      .then(() => {
+        if (!ctxRef.current) return; // torn down meanwhile
+        if (!isLive && Number.isFinite(startPositionSeconds) && startPositionSeconds > 0) {
+          const seek = () => { try { el.currentTime = startPositionSeconds; } catch { /* not seekable yet */ } };
+          if (el.readyState >= 1) seek(); else el.addEventListener("loadedmetadata", seek, { once: true });
+        }
+        lastNudgeRef.current = 0;
+        setError(null);
+        setPhase("running");
+        runLoop();
+      })
+      .catch((err: unknown) => {
+        if (!ctxRef.current) return;
+        const name = err instanceof Error ? err.name : "";
+        // Autoplay gating (no gesture yet) isn't an error — fall back to Start.
+        if (name === "NotAllowedError" || name === "AbortError") {
+          setPhase("blocked");
+        } else {
+          setError(err instanceof Error ? err.message : "Couldn't start the meter");
+          setPhase("error");
+        }
+      });
+  }, [isLive, startPositionSeconds, runLoop]);
+
+  // Build the audio graph for the current track and try to auto-start. The effect
+  // owns the lifecycle so a track change (or StrictMode remount) tears down and
+  // re-creates cleanly. Auto-start succeeds where the browser allows (e.g. after
+  // the click that opened the meter); otherwise it surfaces the Start button.
+  useEffect(() => {
+    if (!streamPath) { setPhase("nostream"); return; }
     setError(null);
     try {
       const Ctx: typeof AudioContext = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -155,7 +224,6 @@ export function VuMeter({ streamPath, startPositionSeconds, isLive, title, subti
       el.crossOrigin = "anonymous";
       el.preload = "auto";
       elRef.current = el;
-
       const source = ctx.createMediaElementSource(el);
       const splitter = ctx.createChannelSplitter(2);
       source.connect(splitter);
@@ -169,50 +237,13 @@ export function VuMeter({ streamPath, startPositionSeconds, isLive, title, subti
         return { node, data: new Float32Array(node.fftSize), spring: { angle: vuToAngle(-20), vel: 0 }, led, needle, peakAt: -Infinity };
       };
       analysersRef.current = [make(0, needleL, ledL), make(1, needleR, ledR)];
-
-      await ctx.resume();
-      await el.play();
-      if (!isLive && Number.isFinite(startPositionSeconds) && startPositionSeconds > 0) {
-        const seek = () => { try { el.currentTime = startPositionSeconds; } catch { /* not seekable yet */ } };
-        if (el.readyState >= 1) seek(); else el.addEventListener("loadedmetadata", seek, { once: true });
-      }
-      lastNudgeRef.current = 0;
-      setStarted(true);
-
-      let last = performance.now();
-      const tick = (now: number) => {
-        const dt = Math.min(0.05, (now - last) / 1000);
-        last = now;
-        for (const a of analysersRef.current) {
-          a.node.getFloatTimeDomainData(a.data as Float32Array<ArrayBuffer>);
-          let sum = 0;
-          let peak = 0;
-          for (let i = 0; i < a.data.length; i++) {
-            const v = a.data[i];
-            sum += v * v;
-            const abs = v < 0 ? -v : v;
-            if (abs > peak) peak = abs;
-          }
-          const rms = Math.sqrt(sum / a.data.length);
-          const vu = 20 * Math.log10(Math.max(rms, 1e-7)) - ZERO_VU_DBFS;
-          const target = vuToAngle(vu);
-          const acc = STIFFNESS * (target - a.spring.angle) - DAMPING * a.spring.vel;
-          a.spring.vel += acc * dt;
-          a.spring.angle += a.spring.vel * dt;
-          a.needle.current?.setAttribute("transform", `rotate(${a.spring.angle.toFixed(2)} ${PIVOT_X} ${PIVOT_Y})`);
-          const peakVu = 20 * Math.log10(Math.max(peak, 1e-7)) - ZERO_VU_DBFS;
-          if (peakVu > 0) a.peakAt = now;
-          a.led.current?.setAttribute("opacity", now - a.peakAt < 900 ? "1" : "0.12");
-        }
-        rafRef.current = requestAnimationFrame(tick);
-      };
-      rafRef.current = requestAnimationFrame(tick);
+      begin();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't start the meter");
-      teardown();
-      setStarted(false);
+      setPhase("error");
     }
-  }, [streamPath, isLive, startPositionSeconds, teardown]);
+    return () => teardown();
+  }, [streamPath, begin, teardown]);
 
   // Re-seek finite tracks when the nudge slider moves (live streams can't seek).
   useEffect(() => {
@@ -225,14 +256,6 @@ export function VuMeter({ streamPath, startPositionSeconds, isLive, title, subti
     }
   }, [nudge, isLive]);
 
-  useEffect(() => () => teardown(), [teardown]);
-
-  // Restart analysis if the active track changes while open.
-  useEffect(() => {
-    if (started && streamPath) { teardown(); setStarted(false); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streamPath]);
-
   return (
     <div className="vu-overlay" role="dialog" aria-label="VU meter">
       <button type="button" className="vu-close" aria-label="Close VU meter" onClick={onClose}><X size={22} /></button>
@@ -242,12 +265,12 @@ export function VuMeter({ streamPath, startPositionSeconds, isLive, title, subti
       </div>
       <div className="vu-footer">
         {title ? <div className="vu-track"><strong>{title}</strong>{subtitle ? <span> — {subtitle}</span> : null}</div> : null}
-        {!streamPath ? (
+        {phase === "nostream" ? (
           <p className="vu-status">No signal — the VU meter reads audio played through MiSonos. Sonos-native sources (Spotify, AirPlay, line-in) can’t be measured.</p>
-        ) : error ? (
+        ) : phase === "error" ? (
           <p className="vu-status vu-error">{error}</p>
-        ) : !started ? (
-          <button type="button" className="vu-start" onClick={() => void start()}>▶ Start meter</button>
+        ) : phase === "blocked" ? (
+          <button type="button" className="vu-start" onClick={begin}>▶ Start meter</button>
         ) : !isLive ? (
           <label className="vu-nudge">
             <span>Sync nudge</span>
