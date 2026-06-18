@@ -2703,7 +2703,7 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
   // Pointer-based drag reorder (mouse + touch). `over` is the insertion slot (0..n,
   // "insert before row `over`"); the visible drop line is drawn there. Row geometry
   // is snapshotted at grab so the floating row doesn't disturb the math.
-  const [drag, setDrag] = useState<{ from: number; over: number; startY: number; y: number } | null>(null);
+  const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
   const rowRectsRef = useRef<{ top: number; bottom: number }[]>([]);
 
   const beginDrag = (event: React.PointerEvent, index: number) => {
@@ -2715,22 +2715,21 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
     });
     event.preventDefault();
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    setDrag({ from: index, over: index, startY: event.clientY, y: event.clientY });
+    setDrag({ from: index, over: index });
   };
   const moveDrag = (event: React.PointerEvent) => {
     const y = event.clientY;
     setDrag((current) => {
       if (!current) return current;
       const rects = rowRectsRef.current;
-      // Judge the drop slot by where the floating row's CENTER lands, not the raw
-      // pointer — the row is grabbed by its handle, so the two are offset.
-      const grabbed = rects[current.from];
-      const projectedCenter = (grabbed ? (grabbed.top + grabbed.bottom) / 2 : y) + (y - current.startY);
+      // Drop slot = the gap before the first row whose midpoint is below the pointer.
+      // The grabbed row stays put (dimmed) and the green line marks this gap, so the
+      // line is exactly where the track lands.
       let over = rects.length;
       for (let i = 0; i < rects.length; i++) {
-        if (projectedCenter < (rects[i].top + rects[i].bottom) / 2) { over = i; break; }
+        if (y < (rects[i].top + rects[i].bottom) / 2) { over = i; break; }
       }
-      return { ...current, y, over };
+      return { ...current, over };
     });
   };
   const endDrag = (event: React.PointerEvent) => {
@@ -2782,7 +2781,6 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
             ref={isActive ? activeItemRef : undefined}
             data-qindex={index}
             className={classes.join(" ")}
-            style={isDragging ? { transform: `translateY(${drag.y - drag.startY}px)` } : undefined}
           >
             <div className="queue-reorder">
               {dragReorder ? (

@@ -1770,10 +1770,9 @@ h2 {
 .queue-reorder button.queue-drag-handle:active { cursor: grabbing; }
 
 .queue-item.dragging {
-  position: relative;
-  z-index: 5;
-  opacity: 0.92;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0.45;
+  outline: 1px dashed rgba(145, 211, 196, 0.7);
+  outline-offset: -2px;
 }
 
 .queue-item.drop-before { box-shadow: inset 0 3px 0 0 #91d3c4; }
