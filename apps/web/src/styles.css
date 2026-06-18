@@ -517,6 +517,99 @@ h2 {
   word-break: break-word;
 }
 
+/* ---- VU meter (full-screen vintage hi-fi visualizer) ---- */
+.vu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2vmin;
+  padding: 4vmin;
+  background: radial-gradient(120% 120% at 50% 30%, #2a241d 0%, #14110d 70%, #0b0907 100%);
+}
+
+.vu-close {
+  position: absolute;
+  top: 2vmin;
+  right: 2vmin;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  border: 1px solid rgba(242, 240, 232, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f2f0e8;
+  cursor: pointer;
+}
+
+.vu-meters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 3vmin;
+  width: 100%;
+  max-width: 1400px;
+  flex: 1;
+  min-height: 0;
+}
+
+.vu-gauge {
+  flex: 1 1 360px;
+  max-width: 680px;
+  height: auto;
+  max-height: 80vh;
+  filter: drop-shadow(0 12px 30px rgba(0, 0, 0, 0.55));
+}
+
+.vu-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  color: #d7d2c4;
+  text-align: center;
+}
+
+.vu-track strong { color: #f4ecd8; }
+.vu-track span { color: #9aa39f; }
+
+.vu-status {
+  margin: 0;
+  max-width: 560px;
+  font-size: 0.9rem;
+  color: #9aa39f;
+}
+
+.vu-status.vu-error { color: #e9a59f; }
+
+.vu-start {
+  padding: 12px 26px;
+  border-radius: 9999px;
+  border: 1px solid rgba(145, 211, 196, 0.5);
+  background: rgba(145, 211, 196, 0.14);
+  color: #d7f2ea;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.vu-nudge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+  color: #9aa39f;
+}
+
+.vu-nudge input { width: min(50vw, 320px); accent-color: #c0a062; }
+.vu-nudge-value { width: 4ch; font-variant-numeric: tabular-nums; text-align: left; }
+
 .custom-services {
   display: grid;
   gap: 12px;

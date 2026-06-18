@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Gauge, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -9,6 +9,7 @@ import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { useDialogs } from "./dialogs.js";
 import { useFavorites, type FavoriteInput } from "./favorites.js";
+import { VuMeter } from "./VuMeter.js";
 import { useLocalPlayer, type LocalTrack } from "./localPlayer.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions, type GroupOption } from "./groupPalette.js";
@@ -53,6 +54,7 @@ export function App() {
   const [state, setState] = useState<LoadState>("idle");
   const [view, setView] = useState<"main" | "settings" | "browse" | "editor" | "library">("main");
   const [artworkFullscreen, setArtworkFullscreen] = useState(false);
+  const [vuOpen, setVuOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
@@ -584,6 +586,9 @@ export function App() {
               onOpen={() => { if (groups.length > 0) void loadGroupPlayback(groups); }}
             />
             <div className="topbar-actions">
+              <button className="icon-button" type="button" title="VU meter" aria-label="VU meter" onClick={() => setVuOpen(true)}>
+                <Gauge size={18} />
+              </button>
               <button className="icon-button" type="button" title="Browse music sources" aria-label="Browse music sources" onClick={() => setView("browse")}>
                 <IconMusic size={18} />
               </button>
@@ -951,6 +956,18 @@ export function App() {
             <p>{[nowPlaying.artist, nowPlaying.album].filter(Boolean).join(" - ")}</p>
           </div>
         </div>
+      ) : null}
+      {vuOpen ? (
+        <VuMeter
+          streamPath={activeQueueItem?.sourceId && activeQueueItem?.trackId
+            ? `/api/stream/${encodeURIComponent(activeQueueItem.sourceId)}/${encodeURIComponent(activeQueueItem.trackId)}`
+            : null}
+          startPositionSeconds={parseSonosTime(nowPlaying?.position)}
+          isLive={isLiveStream}
+          title={effectiveNowPlaying?.title}
+          subtitle={[effectiveNowPlaying?.artist, effectiveNowPlaying?.album].filter(Boolean).join(" — ") || undefined}
+          onClose={() => setVuOpen(false)}
+        />
       ) : null}
     </main>
   );
