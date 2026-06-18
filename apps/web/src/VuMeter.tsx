@@ -115,6 +115,8 @@ interface VuMeterProps {
   isLive: boolean;
   // Speaker/local transport state — when not playing, the animation halts.
   isPlaying: boolean;
+  // Hide all controls (purist mode); a tap anywhere dismisses.
+  noChrome?: boolean;
   title?: string;
   subtitle?: string;
   onClose: () => void;
@@ -124,7 +126,7 @@ interface Spring { angle: number; vel: number }
 interface Channel { needle: React.RefObject<SVGGElement | null>; led: React.RefObject<SVGCircleElement | null>; spring: Spring; peakAt: number }
 type Frame = { lr: number; rr: number; lp: number; rp: number };
 
-export function VuMeter({ getAnalysers, meterUrl, getPosition, isLive, isPlaying, title, subtitle, onClose }: VuMeterProps) {
+export function VuMeter({ getAnalysers, meterUrl, getPosition, isLive, isPlaying, noChrome, title, subtitle, onClose }: VuMeterProps) {
   const [active, setActive] = useState(false);
   const [nudge, setNudge] = useState(0);
   const [footerOpen, setFooterOpen] = useState(true);
@@ -260,18 +262,20 @@ export function VuMeter({ getAnalysers, meterUrl, getPosition, isLive, isPlaying
   useEffect(() => () => stopLoop(), [stopLoop]);
 
   return (
-    <div className="vu-overlay" role="dialog" aria-label="VU meter">
-      <div className="vu-topbar">
-        {!footerOpen ? (
-          <button type="button" className="vu-icon-btn" aria-label="Show info" title="Show info" onClick={() => setFooterOpen(true)}><Info size={20} /></button>
-        ) : null}
-        <button type="button" className="vu-icon-btn" aria-label="Close VU meter" title="Close" onClick={onClose}><X size={22} /></button>
-      </div>
+    <div className="vu-overlay" role="dialog" aria-label="VU meter" onClick={noChrome ? onClose : undefined}>
+      {!noChrome ? (
+        <div className="vu-topbar">
+          {!footerOpen ? (
+            <button type="button" className="vu-icon-btn" aria-label="Show info" title="Show info" onClick={() => setFooterOpen(true)}><Info size={20} /></button>
+          ) : null}
+          <button type="button" className="vu-icon-btn" aria-label="Close VU meter" title="Close" onClick={onClose}><X size={22} /></button>
+        </div>
+      ) : null}
       <div className="vu-meters">
         <Gauge label="L" needleRef={needleL} ledRef={ledL} />
         <Gauge label="R" needleRef={needleR} ledRef={ledR} />
       </div>
-      {footerOpen ? (
+      {!noChrome && footerOpen ? (
         <div className="vu-footer">
           {title ? <div className="vu-track"><strong>{title}</strong>{subtitle ? <span> — {subtitle}</span> : null}</div> : null}
           <div className="vu-controls">
