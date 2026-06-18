@@ -752,13 +752,17 @@ export class SonosService {
     );
   }
 
-  /** Enqueue an ordered list of tracks that may span multiple sources (e.g. a playlist). */
-  async playTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode): Promise<NowPlaying> {
+  /**
+   * Enqueue an ordered list of tracks that may span multiple sources (e.g. a playlist).
+   * `startTrack` (1-based) lets a replace-mode play begin partway in — used for
+   * per-playlist resume; ignored for append/next modes.
+   */
+  async playTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode, startTrack = 1): Promise<NowPlaying> {
     if (refs.length === 0) throw new Error("No tracks to play");
-    return this.enqueueTrackRefs(refs, groupId, mode);
+    return this.enqueueTrackRefs(refs, groupId, mode, true, startTrack);
   }
 
-  private async enqueueTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode, autoplay = true): Promise<NowPlaying> {
+  private async enqueueTrackRefs(refs: { sourceId: string; trackId: string }[], groupId: string, mode: PlaybackMode, autoplay = true, startTrack = 1): Promise<NowPlaying> {
     if (refs.length === 0) throw new Error("trackIds must be non-empty");
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);
@@ -809,7 +813,9 @@ export class SonosService {
         CurrentURI: `x-rincon-queue:${coordinator.uuid}#0`,
         CurrentURIMetaData: ""
       });
-      await callSoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: "1" });
+      // Resume support: begin at `startTrack` (clamped to the queue) instead of track 1.
+      const firstTrack = Math.min(Math.max(1, Math.trunc(startTrack)), queueItems.length);
+      await callSoap(coordinator.ipAddress, "AVTransport", "Seek", { InstanceID: 0, Unit: "TRACK_NR", Target: String(firstTrack) });
       // Skip Play when the caller wants to inherit the prior transport state —
       // e.g. switching radio presets while paused shouldn't start playback.
       if (autoplay) await callSoap(coordinator.ipAddress, "AVTransport", "Play", { InstanceID: 0, Speed: 1 });
@@ -866,6 +872,11 @@ export class SonosService {
       });
     }
     return { items, skipped };
+  }
+
+  /** Public wrapper for callers (e.g. resume capture) that need the source ref of a now-playing URI. */
+  refFromQueueUri(uri: string | undefined): { sourceId: string; trackId: string } | undefined {
+    return this.queueUriToRef(uri);
   }
 
   /** Recover {sourceId, trackId} from a queue item URI (SMAPI x-sonos-http or our stream-proxy URL). */

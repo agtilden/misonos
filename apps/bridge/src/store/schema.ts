@@ -49,6 +49,11 @@ export interface PlaylistTable {
   name: string;
   created_at: string; // ISO-8601
   updated_at: string; // ISO-8601
+  // Lyrion-style per-playlist resume: the stable (source, track) identity of the
+  // track to resume at. Stored by identity (not position) so it survives reorders;
+  // a deleted track falls back to playing from the top. Null = play from the start.
+  resume_source_id: string | null;
+  resume_track_id: string | null;
 }
 
 export interface PlaylistItemTable {

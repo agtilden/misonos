@@ -299,6 +299,10 @@ export interface Playlist {
   itemCount: number;
   createdAt: string;
   updatedAt: string;
+  // 1-based track number "Play all" will resume at, when the playlist was stopped
+  // partway through. Absent/null means play from the top (never started, finished,
+  // or the saved track was removed). Only populated by getPlaylist (needs the items).
+  resumeTrackNumber?: number | null;
 }
 
 export interface PlaylistItem {

@@ -181,8 +181,8 @@ export const bridgeApi = {
     request<void>(`/api/playlists/${id}/items/remove`, { method: "POST", body: JSON.stringify({ itemId }) }),
   reorderPlaylist: (id: number, orderedItemIds: number[]) =>
     request<PlaylistItem[]>(`/api/playlists/${id}/reorder`, { method: "POST", body: JSON.stringify({ orderedItemIds }) }),
-  playPlaylist: (id: number, groupId: string, mode: PlaybackMode) =>
-    request<NowPlaying>(`/api/playlists/${id}/play`, { method: "POST", body: JSON.stringify({ groupId, mode }) }),
+  playPlaylist: (id: number, groupId: string, mode: PlaybackMode, fromStart = false) =>
+    request<NowPlaying>(`/api/playlists/${id}/play`, { method: "POST", body: JSON.stringify({ groupId, mode, fromStart }) }),
   savePlaylistFromQueue: (name: string, groupId: string) =>
     request<{ playlist: Playlist; saved: number; skipped: number }>("/api/playlists/from-queue", { method: "POST", body: JSON.stringify({ name, groupId }) }),
   sourceIcons: () => request<SourceIconMeta[]>("/api/source-icons"),
