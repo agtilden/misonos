@@ -51,6 +51,10 @@ stop_running() {
 
 if [ "$PULL" = 1 ]; then
   echo "==> Pulling latest (deploy/macos/update.sh --no-pull to skip)"
+  # A deploy box never has intentional lockfile edits; discard any stray churn so a
+  # rewritten package-lock.json can't block the fast-forward. (install.sh now uses
+  # `npm ci`, which shouldn't touch it — this is just insurance.)
+  git -C "$REPO" checkout -- package-lock.json 2>/dev/null || true
   git -C "$REPO" pull --ff-only
 fi
 

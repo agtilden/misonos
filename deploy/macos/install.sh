@@ -96,9 +96,22 @@ PLIST
 # Install deps first. A pull can add new packages (or native modules like the
 # podcast source's better-sqlite3); without this the smapi process whose dep is
 # missing crashes on startup with ERR_MODULE_NOT_FOUND and never listens — so the
-# source silently never appears. stdout is quiet; errors still surface (set -e).
-echo "Installing dependencies (picks up any new packages from a pull)"
-( cd "$REPO" && npm install ) >/dev/null
+# source silently never appears.
+#
+# Use `npm ci`, NOT `npm install`: ci installs strictly from package-lock.json and
+# never rewrites it, so a deploy can't dirty the working tree (which would then
+# block the next `git pull`). `npm install` would rewrite the lockfile whenever the
+# box's npm version differs from the one that generated it. Gate it on a hash of
+# the lockfile so unchanged updates skip the (clean, slower) reinstall.
+DEPS_STAMP="$REPO/node_modules/.misonos-deps-stamp"
+LOCK_HASH="$(shasum "$REPO/package-lock.json" | awk '{print $1}')"
+if [ ! -d "$REPO/node_modules" ] || [ "$(cat "$DEPS_STAMP" 2>/dev/null)" != "$LOCK_HASH" ]; then
+  echo "Installing dependencies (npm ci — first run or lockfile changed)"
+  ( cd "$REPO" && npm ci ) >/dev/null
+  echo "$LOCK_HASH" > "$DEPS_STAMP"
+else
+  echo "Dependencies unchanged (lockfile matches) — skipping install"
+fi
 
 # Build the bridge AND the web app. run.sh serves the web via `vite preview`,
 # which serves a PRE-BUILT apps/web/dist and does NOT build — so without this the
