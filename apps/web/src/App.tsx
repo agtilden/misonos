@@ -2718,13 +2718,17 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
     setDrag({ from: index, over: index, startY: event.clientY, y: event.clientY });
   };
   const moveDrag = (event: React.PointerEvent) => {
+    const y = event.clientY;
     setDrag((current) => {
       if (!current) return current;
-      const y = event.clientY;
-      let over = rowRectsRef.current.length;
-      for (let i = 0; i < rowRectsRef.current.length; i++) {
-        const r = rowRectsRef.current[i];
-        if (y < (r.top + r.bottom) / 2) { over = i; break; }
+      const rects = rowRectsRef.current;
+      // Judge the drop slot by where the floating row's CENTER lands, not the raw
+      // pointer — the row is grabbed by its handle, so the two are offset.
+      const grabbed = rects[current.from];
+      const projectedCenter = (grabbed ? (grabbed.top + grabbed.bottom) / 2 : y) + (y - current.startY);
+      let over = rects.length;
+      for (let i = 0; i < rects.length; i++) {
+        if (projectedCenter < (rects[i].top + rects[i].bottom) / 2) { over = i; break; }
       }
       return { ...current, y, over };
     });
