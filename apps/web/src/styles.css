@@ -1769,10 +1769,14 @@ h2 {
 
 .queue-reorder button.queue-drag-handle:active { cursor: grabbing; }
 
+/* Floating out of flow under the cursor; the remaining rows reflow to close the gap
+   and the green insertion line shows where it will land. Position/size are set inline. */
 .queue-item.dragging {
-  opacity: 0.45;
-  outline: 1px dashed rgba(145, 211, 196, 0.7);
-  outline-offset: -2px;
+  z-index: 50;
+  opacity: 0.96;
+  border-radius: 8px;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  cursor: grabbing;
 }
 
 .queue-item.drop-before { box-shadow: inset 0 3px 0 0 #91d3c4; }

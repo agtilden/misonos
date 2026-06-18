@@ -2700,47 +2700,57 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
   const listRef = useRef<HTMLOListElement | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
 
-  // Pointer-based drag reorder (mouse + touch). `over` is the insertion slot (0..n,
-  // "insert before row `over`"); the visible drop line is drawn there. Row geometry
-  // is snapshotted at grab so the floating row doesn't disturb the math.
-  const [drag, setDrag] = useState<{ from: number; over: number } | null>(null);
-  const rowRectsRef = useRef<{ top: number; bottom: number }[]>([]);
+  // Pointer-based drag reorder (mouse + touch). Floating model: the grabbed row lifts
+  // out of flow (position:fixed, following the cursor), so the remaining rows reflow
+  // and close the gap. `to` is the row's final 0-based index — the number of *other*
+  // rows whose midpoint sits above the pointer — which is exactly the value the up/down
+  // buttons and reorderQueueItem already use. The green line is drawn from the same
+  // `to`, so what you see is always where it lands.
+  type DragState = { from: number; to: number; top: number; left: number; width: number };
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const grabOffsetRef = useRef(0);
+
+  const computeTo = (from: number, y: number): number => {
+    const ol = listRef.current;
+    if (!ol) return from;
+    const children = Array.from(ol.children);
+    let to = 0;
+    for (let i = 0; i < children.length; i++) {
+      if (i === from) continue; // grabbed row floats out of flow; ignore its slot
+      const rect = children[i].getBoundingClientRect();
+      const mid = (rect.top + rect.bottom) / 2;
+      if (y > mid) to++; // pointer is below this row → land after it
+    }
+    return to;
+  };
 
   const beginDrag = (event: React.PointerEvent, index: number) => {
     const ol = listRef.current;
-    if (!ol) return;
-    rowRectsRef.current = Array.from(ol.children).map((child) => {
-      const rect = child.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom };
-    });
+    const row = ol?.children[index] as HTMLElement | undefined;
+    if (!ol || !row) return;
+    const rect = row.getBoundingClientRect();
+    grabOffsetRef.current = event.clientY - rect.top;
     event.preventDefault();
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    setDrag({ from: index, over: index });
+    const next = { from: index, to: index, top: rect.top, left: rect.left, width: rect.width };
+    dragRef.current = next;
+    setDrag(next);
   };
   const moveDrag = (event: React.PointerEvent) => {
-    const y = event.clientY;
-    setDrag((current) => {
-      if (!current) return current;
-      const rects = rowRectsRef.current;
-      // Drop slot = the gap before the first row whose midpoint is below the pointer.
-      // The grabbed row stays put (dimmed) and the green line marks this gap, so the
-      // line is exactly where the track lands.
-      let over = rects.length;
-      for (let i = 0; i < rects.length; i++) {
-        if (y < (rects[i].top + rects[i].bottom) / 2) { over = i; break; }
-      }
-      return { ...current, over };
-    });
+    const current = dragRef.current;
+    if (!current) return;
+    const to = computeTo(current.from, event.clientY);
+    const next = { ...current, to, top: event.clientY - grabOffsetRef.current };
+    dragRef.current = next;
+    setDrag(next);
   };
   const endDrag = (event: React.PointerEvent) => {
     (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
-    setDrag((current) => {
-      if (current) {
-        const to = current.from < current.over ? current.over - 1 : current.over;
-        if (to !== current.from) onReorder(current.from, to);
-      }
-      return null;
-    });
+    const current = dragRef.current;
+    dragRef.current = null;
+    setDrag(null);
+    if (current && current.to !== current.from) onReorder(current.from, current.to);
   };
 
   useEffect(() => {
@@ -2773,14 +2783,21 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder,
         const classes = ["queue-item"];
         if (isActive) classes.push("active");
         if (isDragging) classes.push("dragging");
-        if (drag && drag.over === index && drag.from !== index) classes.push("drop-before");
-        if (drag && drag.over === queue.length && index === queue.length - 1) classes.push("drop-after");
+        // The insertion line lives before the row whose final index equals `to`. In the
+        // full (un-lifted) list that row sits at `to` when dropping above the grabbed
+        // row, or `to + 1` when dropping below it (the grabbed slot is skipped).
+        if (drag && !isDragging) {
+          const lineIndex = drag.to < drag.from ? drag.to : drag.to + 1;
+          if (lineIndex === index) classes.push("drop-before");
+          else if (lineIndex >= queue.length && index === queue.length - 1) classes.push("drop-after");
+        }
         return (
           <li
             key={`${item.id}-${index}`}
             ref={isActive ? activeItemRef : undefined}
             data-qindex={index}
             className={classes.join(" ")}
+            style={isDragging && drag ? { position: "fixed", top: drag.top, left: drag.left, width: drag.width, zIndex: 50 } : undefined}
           >
             <div className="queue-reorder">
               {dragReorder ? (
