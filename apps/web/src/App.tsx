@@ -586,9 +586,6 @@ export function App() {
               onOpen={() => { if (groups.length > 0) void loadGroupPlayback(groups); }}
             />
             <div className="topbar-actions">
-              <button className="icon-button" type="button" title="VU meter" aria-label="VU meter" onClick={() => setVuOpen(true)}>
-                <Gauge size={18} />
-              </button>
               <button className="icon-button" type="button" title="Browse music sources" aria-label="Browse music sources" onClick={() => setView("browse")}>
                 <IconMusic size={18} />
               </button>
@@ -703,14 +700,19 @@ export function App() {
       ) : view === "main" ? (
       <section className="controller-grid main-view">
         <section className={`now-playing${isLiveStream ? " compact" : ""}`} aria-label="Now playing">
-          <button
-            type="button"
-            className="artwork-frame"
-            aria-label="Expand album art"
-            onClick={() => setArtworkFullscreen(true)}
-          >
-            {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
-          </button>
+          <div className="artwork-wrap">
+            <button
+              type="button"
+              className="artwork-frame"
+              aria-label="Expand album art"
+              onClick={() => setArtworkFullscreen(true)}
+            >
+              {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
+            </button>
+            <button type="button" className="artwork-vu" title="VU meter" aria-label="Open VU meter" onClick={() => setVuOpen(true)}>
+              <Gauge size={18} />
+            </button>
+          </div>
           <div className="track-copy">
             <p className="eyebrow">{localMode ? "ON THIS DEVICE" : effectiveNowPlaying?.state ?? "UNKNOWN"}</p>
             <h2>{effectiveNowPlaying?.title ?? "Nothing selected"}</h2>
@@ -964,6 +966,7 @@ export function App() {
             : null}
           startPositionSeconds={parseSonosTime(nowPlaying?.position)}
           isLive={isLiveStream}
+          isPlaying={effectivePlaying}
           title={effectiveNowPlaying?.title}
           subtitle={[effectiveNowPlaying?.artist, effectiveNowPlaying?.album].filter(Boolean).join(" — ") || undefined}
           onClose={() => setVuOpen(false)}
