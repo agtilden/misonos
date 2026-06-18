@@ -1892,9 +1892,25 @@ small {
   min-height: 0;
 }
 
+.artwork-overlay-top {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top));
+  right: 16px;
+  display: flex;
+  gap: 10px;
+  z-index: 1;
+}
+
 .artwork-overlay-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   color: #f2f0e8;
+}
+
+.artwork-meta-hide {
+  margin-top: 12px;
 }
 
 .artwork-overlay-meta h2 {
@@ -1908,21 +1924,6 @@ small {
   font-size: 0.9rem;
 }
 
-.artwork-overlay-close {
-  position: absolute;
-  top: calc(16px + env(safe-area-inset-top));
-  right: 16px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(242, 240, 232, 0.18);
-  border-radius: 999px;
-  width: 40px;
-  height: 40px;
-  display: grid;
-  place-items: center;
-  color: #f2f0e8;
-  cursor: pointer;
-  z-index: 1;
-}
 
 .artwork-frame img {
   display: block;
@@ -1938,8 +1939,11 @@ small {
   height: 100%;
   color: #141716;
   background: linear-gradient(135deg, #91d3c4, #f1b555);
-  font-size: clamp(2.5rem, 8vw, 5rem);
-  font-weight: 900;
+}
+
+.artwork-fallback svg {
+  width: 62%;
+  height: 62%;
 }
 
 .track-copy {

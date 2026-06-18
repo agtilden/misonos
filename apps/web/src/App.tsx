@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, Blend, Check, Gauge, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Gauge, Heart, Info, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -13,7 +13,7 @@ import { VuMeter } from "./VuMeter.js";
 import { useLocalPlayer, type LocalTrack } from "./localPlayer.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions, type GroupOption } from "./groupPalette.js";
-import { LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
+import { FULLSCREEN_NO_CHROME_PREF, LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
 const GroupEditor = lazy(() => import("./GroupEditor.js").then((module) => ({ default: module.GroupEditor })));
 const LibraryView = lazy(() => import("./LibraryView.js").then((module) => ({ default: module.LibraryView })));
@@ -54,7 +54,9 @@ export function App() {
   const [state, setState] = useState<LoadState>("idle");
   const [view, setView] = useState<"main" | "settings" | "browse" | "editor" | "library">("main");
   const [artworkFullscreen, setArtworkFullscreen] = useState(false);
+  const [artworkMetaOpen, setArtworkMetaOpen] = useState(true);
   const [vuOpen, setVuOpen] = useState(false);
+  const [noChrome, setNoChrome] = useState<boolean>(() => readLocalPref(FULLSCREEN_NO_CHROME_PREF) ?? false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
@@ -209,6 +211,9 @@ export function App() {
     });
     void loadPref(MAX_VOLUME_PREF).then((value) => {
       if (!cancelled && value !== null) setMaxVolume(Math.min(100, Math.max(0, value)));
+    });
+    void loadPref(FULLSCREEN_NO_CHROME_PREF).then((value) => {
+      if (!cancelled && value !== null) setNoChrome(value);
     });
     return () => { cancelled = true; };
   }, []);
@@ -652,6 +657,11 @@ export function App() {
               setShowDevPanels(value);
               setPref(SHOW_DEV_PANELS_PREF, value);
             }}
+            noChrome={noChrome}
+            onNoChromeChange={(value) => {
+              setNoChrome(value);
+              setPref(FULLSCREEN_NO_CHROME_PREF, value);
+            }}
             maxVolume={maxVolume}
             onMaxVolumeChange={(value) => {
               setMaxVolume(value);
@@ -705,9 +715,19 @@ export function App() {
               type="button"
               className="artwork-frame"
               aria-label="Expand album art"
-              onClick={() => setArtworkFullscreen(true)}
+              onClick={() => { setArtworkMetaOpen(true); setArtworkFullscreen(true); }}
             >
-              {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
+              {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : (
+                <div className="artwork-fallback" aria-label="MiSonos">
+                  <svg viewBox="0 0 512 512" role="img" aria-hidden="true">
+                    <g fill="currentColor">
+                      <rect x="170" y="176" width="44" height="160" rx="22" />
+                      <rect x="234" y="136" width="44" height="240" rx="22" />
+                      <rect x="298" y="200" width="44" height="112" rx="22" />
+                    </g>
+                  </svg>
+                </div>
+              )}
             </button>
             <button type="button" className="artwork-vu" title="VU meter" aria-label="Open VU meter" onClick={() => setVuOpen(true)}>
               <Gauge size={18} />
@@ -944,19 +964,28 @@ export function App() {
       ) : null}
       {artworkFullscreen && nowPlaying?.albumArtUri ? (
         <div className="artwork-overlay" role="dialog" aria-label="Now playing artwork" onClick={() => setArtworkFullscreen(false)}>
-          <button
-            type="button"
-            className="artwork-overlay-close"
-            aria-label="Close"
-            onClick={(event) => { event.stopPropagation(); setArtworkFullscreen(false); }}
-          >
-            <X size={22} />
-          </button>
+          {!noChrome ? (
+            <div className="artwork-overlay-top">
+              {!artworkMetaOpen ? (
+                <button type="button" className="vu-icon-btn" aria-label="Show track info" title="Show info" onClick={(event) => { event.stopPropagation(); setArtworkMetaOpen(true); }}>
+                  <Info size={20} />
+                </button>
+              ) : null}
+              <button type="button" className="vu-icon-btn" aria-label="Close" title="Close" onClick={(event) => { event.stopPropagation(); setArtworkFullscreen(false); }}>
+                <X size={22} />
+              </button>
+            </div>
+          ) : null}
           <img src={nowPlaying.albumArtUri} alt="" />
-          <div className="artwork-overlay-meta">
-            <h2>{nowPlaying.title}</h2>
-            <p>{[nowPlaying.artist, nowPlaying.album].filter(Boolean).join(" - ")}</p>
-          </div>
+          {!noChrome && artworkMetaOpen ? (
+            <div className="artwork-overlay-meta">
+              <h2>{nowPlaying.title}</h2>
+              <p>{[nowPlaying.artist, nowPlaying.album].filter(Boolean).join(" - ")}</p>
+              <button type="button" className="vu-hide artwork-meta-hide" aria-label="Hide track info" title="Hide info" onClick={(event) => { event.stopPropagation(); setArtworkMetaOpen(false); }}>
+                <X size={16} />
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {vuOpen ? (
@@ -975,6 +1004,7 @@ export function App() {
           }}
           isLive={isLiveStream}
           isPlaying={effectivePlaying}
+          noChrome={noChrome}
           title={effectiveNowPlaying?.title}
           subtitle={[effectiveNowPlaying?.artist, effectiveNowPlaying?.album].filter(Boolean).join(" — ") || undefined}
           onClose={() => setVuOpen(false)}
@@ -2095,12 +2125,14 @@ function SourceLogoSettings({ customIcons, onChanged }: SourceLogoSettingsProps)
 interface PreferencesProps {
   showDevPanels: boolean;
   onShowDevPanelsChange: (value: boolean) => void;
+  noChrome: boolean;
+  onNoChromeChange: (value: boolean) => void;
   maxVolume: number;
   onMaxVolumeChange: (value: number) => void;
   onMaxVolumeCommit: (value: number) => void;
 }
 
-function Preferences({ showDevPanels, onShowDevPanelsChange, maxVolume, onMaxVolumeChange, onMaxVolumeCommit }: PreferencesProps) {
+function Preferences({ showDevPanels, onShowDevPanelsChange, noChrome, onNoChromeChange, maxVolume, onMaxVolumeChange, onMaxVolumeCommit }: PreferencesProps) {
   return (
     <section className="queue-panel" aria-label="Preferences">
       <div className="section-heading">
@@ -2125,6 +2157,18 @@ function Preferences({ showDevPanels, onShowDevPanelsChange, maxVolume, onMaxVol
           />
           <output>{maxVolume}</output>
         </span>
+      </label>
+      <label className="pref-row">
+        <span className="pref-label">
+          <strong>No chrome on fullscreen</strong>
+          <small>Hide every control (even the close button) on the full-screen cover art and VU meter — a tap dismisses.</small>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={noChrome}
+          onChange={(event) => onNoChromeChange(event.target.checked)}
+        />
       </label>
       <label className="pref-row">
         <span className="pref-label">

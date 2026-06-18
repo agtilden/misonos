@@ -34,6 +34,9 @@ function numberPref(bridgeKey: string, localKey: string): PrefDef<number> {
 export const LAST_GROUP_PREF = stringPref("lastGroupKey", "misonos:lastGroupKey");
 export const LAST_SOURCE_PREF = stringPref("lastSourceId", "misonos:lastSourceId");
 export const SHOW_DEV_PANELS_PREF = boolPref("showDevPanels", "misonos:showDevPanels");
+// "No chrome" — hide every control (even the close X) on the full-screen cover-art
+// and VU-meter views, so a purist gets the visual undisturbed; a tap dismisses.
+export const FULLSCREEN_NO_CHROME_PREF = boolPref("fullscreenNoChrome", "misonos:fullscreenNoChrome");
 // Caps how high the volume sliders can go (0–100). The slider keeps its full width
 // but represents 0..maxVolume, so the controller never sends a higher value.
 export const MAX_VOLUME_PREF = numberPref("maxVolume", "misonos:maxVolume");
