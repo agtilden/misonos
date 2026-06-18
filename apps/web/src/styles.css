@@ -301,17 +301,13 @@ button {
   grid-template-areas: "now" "presets" "queue";
 }
 
-/* The restore nudge claims its own row only when present, so no empty gap otherwise. */
-.controller-grid.main-view.with-nudge {
-  grid-template-areas: "nudge" "now" "presets" "queue";
-}
-
+/* Global restore nudge: shown under the header in any view (main, library, …). */
 .restore-nudge {
-  grid-area: nudge;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin: 12px 0 0;
   padding: 10px 14px;
   border: 1px solid rgba(145, 211, 196, 0.5);
   border-radius: 10px;
