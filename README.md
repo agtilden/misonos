@@ -21,6 +21,30 @@ Modern TypeScript Sonos controller targeting fast LAN control.
 | ![Now playing](docs/screenshots/now-playing.jpg)<br>**Now playing** | ![Zones](docs/screenshots/now-playing-zones.jpg)<br>**Zones** | ![Browse music](docs/screenshots/music-browse.jpg)<br>**Browse music** |
 | ![Zone editor](docs/screenshots/zone-editor.jpg)<br>**Zone editor** | ![EQ editor](docs/screenshots/eq-editor.jpg)<br>**EQ editor** | ![Settings](docs/screenshots/settings.jpg)<br>**Settings** |
 
+## VU meter
+
+<p align="center"><img src="docs/screenshots/vu-meter.png" alt="Full-screen VU meter" width="820"></p>
+
+Tap the gauge badge on the album art for a full-screen, vintage-hi-fi **VU meter**.
+It's pure SVG, so it scales crisply to any display — it looks especially good on an
+iPad propped on a stand while a queue plays in the background. The needles follow
+the **real** signal (not a canned animation), with authentic ballistics: RMS
+response, the lazy ~300 ms needle, the −20…+3 dB scale with a red zone past 0 VU,
+and peak LEDs.
+
+Sonos exposes no output level, so MiSonos measures the audio itself — without ever
+downloading a second copy of the stream:
+
+- **This device** — when playing locally, it taps the already-decoded audio with
+  the Web Audio API, so the needles are perfectly in sync with what you hear.
+- **Sonos** — the bridge tees the exact bytes it's already proxying to the speaker
+  into `ffmpeg`, computes per-channel levels, and streams them to the meter over
+  SSE; the client lines them up to the playback position (with a sync-nudge trim).
+
+It only works for audio MiSonos itself plays (the bundled sources). Content Sonos
+plays natively (Spotify, AirPlay, line-in) isn't visible to us, so the meter shows
+"No signal".
+
 ## Architecture
 
 - `apps/web`: React + Vite controller UI.
