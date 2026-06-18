@@ -334,6 +334,36 @@ export class SonosService {
     return this.queue(groupId);
   }
 
+  async clearQueue(groupId: string): Promise<QueueItem[]> {
+    const group = await this.requireGroup(groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    await this.guardSoap(coordinator.uuid, async () => {
+      await callSoap(coordinator.ipAddress, "AVTransport", "RemoveAllTracksFromQueue", { InstanceID: 0 });
+    });
+    return this.queue(groupId);
+  }
+
+  async reorderQueueTrack(groupId: string, fromIndex: number, toIndex: number): Promise<QueueItem[]> {
+    const group = await this.requireGroup(groupId);
+    const coordinator = await this.requireZone(group.coordinatorId);
+    if (fromIndex !== toIndex && fromIndex >= 0 && toIndex >= 0) {
+      // ReorderTracksInQueue: move NumberOfTracks starting at StartingIndex to
+      // before InsertBefore — all 1-based, evaluated against the pre-move queue.
+      // Moving down lands one further along (the source slot collapses), so +2.
+      const insertBefore = toIndex < fromIndex ? toIndex + 1 : toIndex + 2;
+      await this.guardSoap(coordinator.uuid, async () => {
+        await callSoap(coordinator.ipAddress, "AVTransport", "ReorderTracksInQueue", {
+          InstanceID: 0,
+          UpdateID: 0,
+          StartingIndex: fromIndex + 1,
+          NumberOfTracks: 1,
+          InsertBefore: insertBefore
+        });
+      });
+    }
+    return this.queue(groupId);
+  }
+
   async transport(groupId: string, action: TransportAction): Promise<NowPlaying> {
     const group = await this.requireGroup(groupId);
     const coordinator = await this.requireZone(group.coordinatorId);

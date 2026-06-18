@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, Blend, Check, Gauge, Heart, Info, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, ChevronDown, ChevronUp, Gauge, GripVertical, Heart, Info, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Trash2, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -13,7 +13,7 @@ import { VuMeter } from "./VuMeter.js";
 import { useLocalPlayer, type LocalTrack } from "./localPlayer.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions, type GroupOption } from "./groupPalette.js";
-import { FULLSCREEN_NO_CHROME_PREF, LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
+import { FULLSCREEN_NO_CHROME_PREF, LAST_GROUP_PREF, LAST_SOURCE_PREF, MAX_VOLUME_PREF, QUEUE_DRAG_REORDER_PREF, SHOW_DEV_PANELS_PREF, loadPref, readLocalPref, setPref } from "./prefs.js";
 
 const GroupEditor = lazy(() => import("./GroupEditor.js").then((module) => ({ default: module.GroupEditor })));
 const LibraryView = lazy(() => import("./LibraryView.js").then((module) => ({ default: module.LibraryView })));
@@ -57,6 +57,7 @@ export function App() {
   const [artworkMetaOpen, setArtworkMetaOpen] = useState(true);
   const [vuOpen, setVuOpen] = useState(false);
   const [noChrome, setNoChrome] = useState<boolean>(() => readLocalPref(FULLSCREEN_NO_CHROME_PREF) ?? false);
+  const [queueDragReorder, setQueueDragReorder] = useState<boolean>(() => readLocalPref(QUEUE_DRAG_REORDER_PREF) ?? false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
@@ -176,6 +177,7 @@ export function App() {
   const onPrimaryMute = () => { if (localMode) localPlayer.toggleMute(); else void togglePrimaryMute(); };
   const onQueuePlay = (index: number) => { if (localMode) localPlayer.playIndex(index); else void playQueueItem(index + 1); };
   const onQueueRemove = (index: number) => { if (localMode) localPlayer.removeIndex(index); else void removeQueueItem(index); };
+  const onQueueReorder = (from: number, to: number) => { if (localMode) localPlayer.reorderIndex(from, to); else void reorderQueueItem(from, to); };
 
   const applySnapshot = useCallback((snapshot: BridgeSnapshot) => {
     setGroups((current) => (groupsTopologyKey(current) === groupsTopologyKey(snapshot.groups) ? current : snapshot.groups));
@@ -214,6 +216,9 @@ export function App() {
     });
     void loadPref(FULLSCREEN_NO_CHROME_PREF).then((value) => {
       if (!cancelled && value !== null) setNoChrome(value);
+    });
+    void loadPref(QUEUE_DRAG_REORDER_PREF).then((value) => {
+      if (!cancelled && value !== null) setQueueDragReorder(value);
     });
     return () => { cancelled = true; };
   }, []);
@@ -398,6 +403,17 @@ export function App() {
     }
   };
 
+  const clearQueueItems = async () => {
+    if (!(await dialogs.confirm({ message: "Clear the queue?", confirmLabel: "Clear" }))) return;
+    if (localMode) { localPlayer.stop(); return; }
+    if (!selectedGroup) return;
+    try {
+      setQueue(await bridgeApi.clearQueue(selectedGroup.id));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not clear the queue");
+    }
+  };
+
   const setZoneVolume = async (zoneId: string, volume: number) => {
     const previous = zoneVolumes[zoneId]?.volume;
     if (!(await confirmVolumeJump(previous, volume))) return;
@@ -465,6 +481,24 @@ export function App() {
   const removeQueueItem = async (index: number) => {
     if (!selectedGroup) return;
     setQueue(await bridgeApi.removeQueueTrack(selectedGroup.id, index));
+  };
+
+  const reorderQueueItem = async (from: number, to: number) => {
+    if (!selectedGroup || from === to) return;
+    // Optimistic: reflect the move immediately, then reconcile with the speaker.
+    setQueue((current) => {
+      if (from < 0 || to < 0 || from >= current.length || to >= current.length) return current;
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    try {
+      setQueue(await bridgeApi.reorderQueueTrack(selectedGroup.id, from, to));
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not reorder the queue");
+      void loadQueue(selectedGroup.id);
+    }
   };
 
   const queueItemFavorited = (item: QueueItem): boolean =>
@@ -661,6 +695,11 @@ export function App() {
             onNoChromeChange={(value) => {
               setNoChrome(value);
               setPref(FULLSCREEN_NO_CHROME_PREF, value);
+            }}
+            queueDragReorder={queueDragReorder}
+            onQueueDragReorderChange={(value) => {
+              setQueueDragReorder(value);
+              setPref(QUEUE_DRAG_REORDER_PREF, value);
             }}
             maxVolume={maxVolume}
             onMaxVolumeChange={(value) => {
@@ -935,6 +974,16 @@ export function App() {
               >
                 <Plus size={16} />
               </button>
+              <button
+                className="icon-button compact"
+                type="button"
+                title="Clear queue"
+                aria-label="Clear queue"
+                disabled={effectiveQueue.length === 0 || (!localMode && !selectedGroup)}
+                onClick={() => void clearQueueItems()}
+              >
+                <Trash2 size={16} />
+              </button>
               <span>{effectiveQueue.length}</span>
             </div>
           </div>
@@ -954,6 +1003,8 @@ export function App() {
               isPlaying={effectivePlaying}
               onPlay={(index) => onQueuePlay(index)}
               onRemove={(index) => onQueueRemove(index)}
+              onReorder={onQueueReorder}
+              dragReorder={queueDragReorder}
               isFavorite={queueItemFavorited}
               onFavorite={(item) => void toggleQueueFavorite(item)}
             />
@@ -2127,12 +2178,14 @@ interface PreferencesProps {
   onShowDevPanelsChange: (value: boolean) => void;
   noChrome: boolean;
   onNoChromeChange: (value: boolean) => void;
+  queueDragReorder: boolean;
+  onQueueDragReorderChange: (value: boolean) => void;
   maxVolume: number;
   onMaxVolumeChange: (value: number) => void;
   onMaxVolumeCommit: (value: number) => void;
 }
 
-function Preferences({ showDevPanels, onShowDevPanelsChange, noChrome, onNoChromeChange, maxVolume, onMaxVolumeChange, onMaxVolumeCommit }: PreferencesProps) {
+function Preferences({ showDevPanels, onShowDevPanelsChange, noChrome, onNoChromeChange, queueDragReorder, onQueueDragReorderChange, maxVolume, onMaxVolumeChange, onMaxVolumeCommit }: PreferencesProps) {
   return (
     <section className="queue-panel" aria-label="Preferences">
       <div className="section-heading">
@@ -2168,6 +2221,18 @@ function Preferences({ showDevPanels, onShowDevPanelsChange, noChrome, onNoChrom
           role="switch"
           checked={noChrome}
           onChange={(event) => onNoChromeChange(event.target.checked)}
+        />
+      </label>
+      <label className="pref-row">
+        <span className="pref-label">
+          <strong>Drag to reorder the queue</strong>
+          <small>Drag a track by its handle instead of the up/down buttons. Turn off if dragging misbehaves on a device.</small>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={queueDragReorder}
+          onChange={(event) => onQueueDragReorderChange(event.target.checked)}
         />
       </label>
       <label className="pref-row">
@@ -2625,13 +2690,68 @@ interface QueueListProps {
   isPlaying: boolean;
   onPlay: (index: number) => void;
   onRemove: (index: number) => void;
+  onReorder: (from: number, to: number) => void;
+  dragReorder: boolean;
   isFavorite: (item: QueueItem) => boolean;
   onFavorite: (item: QueueItem) => void;
 }
 
-function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, isFavorite, onFavorite }: QueueListProps) {
+function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, onReorder, dragReorder, isFavorite, onFavorite }: QueueListProps) {
   const listRef = useRef<HTMLOListElement | null>(null);
   const activeItemRef = useRef<HTMLLIElement | null>(null);
+
+  // Pointer-based drag reorder (mouse + touch). Floating model: the grabbed row lifts
+  // out of flow (position:fixed, following the cursor), so the remaining rows reflow
+  // and close the gap. `to` is the row's final 0-based index — the number of *other*
+  // rows whose midpoint sits above the pointer — which is exactly the value the up/down
+  // buttons and reorderQueueItem already use. The green line is drawn from the same
+  // `to`, so what you see is always where it lands.
+  type DragState = { from: number; to: number; top: number; left: number; width: number };
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const grabOffsetRef = useRef(0);
+
+  const computeTo = (from: number, y: number): number => {
+    const ol = listRef.current;
+    if (!ol) return from;
+    const children = Array.from(ol.children);
+    let to = 0;
+    for (let i = 0; i < children.length; i++) {
+      if (i === from) continue; // grabbed row floats out of flow; ignore its slot
+      const rect = children[i].getBoundingClientRect();
+      const mid = (rect.top + rect.bottom) / 2;
+      if (y > mid) to++; // pointer is below this row → land after it
+    }
+    return to;
+  };
+
+  const beginDrag = (event: React.PointerEvent, index: number) => {
+    const ol = listRef.current;
+    const row = ol?.children[index] as HTMLElement | undefined;
+    if (!ol || !row) return;
+    const rect = row.getBoundingClientRect();
+    grabOffsetRef.current = event.clientY - rect.top;
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    const next = { from: index, to: index, top: rect.top, left: rect.left, width: rect.width };
+    dragRef.current = next;
+    setDrag(next);
+  };
+  const moveDrag = (event: React.PointerEvent) => {
+    const current = dragRef.current;
+    if (!current) return;
+    const to = computeTo(current.from, event.clientY);
+    const next = { ...current, to, top: event.clientY - grabOffsetRef.current };
+    dragRef.current = next;
+    setDrag(next);
+  };
+  const endDrag = (event: React.PointerEvent) => {
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+    const current = dragRef.current;
+    dragRef.current = null;
+    setDrag(null);
+    if (current && current.to !== current.from) onReorder(current.from, current.to);
+  };
 
   useEffect(() => {
     if (activeIndex < 0) return;
@@ -2659,12 +2779,51 @@ function QueueList({ queue, activeIndex, isPlaying, onPlay, onRemove, isFavorite
     <ol className="queue-list" ref={listRef}>
       {queue.map((item, index) => {
         const isActive = index === activeIndex;
+        const isDragging = drag?.from === index;
+        const classes = ["queue-item"];
+        if (isActive) classes.push("active");
+        if (isDragging) classes.push("dragging");
+        // The insertion line lives before the row whose final index equals `to`. In the
+        // full (un-lifted) list that row sits at `to` when dropping above the grabbed
+        // row, or `to + 1` when dropping below it (the grabbed slot is skipped).
+        if (drag && !isDragging) {
+          const lineIndex = drag.to < drag.from ? drag.to : drag.to + 1;
+          if (lineIndex === index) classes.push("drop-before");
+          else if (lineIndex >= queue.length && index === queue.length - 1) classes.push("drop-after");
+        }
         return (
           <li
             key={`${item.id}-${index}`}
             ref={isActive ? activeItemRef : undefined}
-            className={isActive ? "queue-item active" : "queue-item"}
+            data-qindex={index}
+            className={classes.join(" ")}
+            style={isDragging && drag ? { position: "fixed", top: drag.top, left: drag.left, width: drag.width, zIndex: 50 } : undefined}
           >
+            <div className="queue-reorder">
+              {dragReorder ? (
+                <button
+                  type="button"
+                  className="queue-drag-handle"
+                  aria-label={`Drag ${item.title} to reorder`}
+                  title="Drag to reorder"
+                  onPointerDown={(event) => beginDrag(event, index)}
+                  onPointerMove={moveDrag}
+                  onPointerUp={endDrag}
+                  onPointerCancel={endDrag}
+                >
+                  <GripVertical size={16} />
+                </button>
+              ) : (
+                <>
+                  <button type="button" title="Move up" aria-label={`Move ${item.title} up`} disabled={index === 0} onClick={() => onReorder(index, index - 1)}>
+                    <ChevronUp size={15} />
+                  </button>
+                  <button type="button" title="Move down" aria-label={`Move ${item.title} down`} disabled={index === queue.length - 1} onClick={() => onReorder(index, index + 1)}>
+                    <ChevronDown size={15} />
+                  </button>
+                </>
+              )}
+            </div>
             <button type="button" className="queue-item-main" onClick={() => onPlay(index)} aria-current={isActive ? "true" : undefined}>
               <span className="queue-indicator" aria-hidden="true">
                 {isActive ? <AudioLines size={16} className={isPlaying ? "queue-indicator-active playing" : "queue-indicator-active"} /> : <span className="queue-track-number">{index + 1}</span>}

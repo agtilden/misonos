@@ -21,6 +21,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const favs = useFavorites();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [sources, setSources] = useState<SourceDescriptor[]>([]);
+  const [query, setQuery] = useState("");
   const [open, setOpen] = useState<OpenPlaylist | null>(null);
   const [newName, setNewName] = useState("");
   const [renamingId, setRenamingId] = useState<number | null>(null);
@@ -46,9 +47,15 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   );
 
   // Group favorites by provider; within a provider, radio (presettable) first, then by title.
+  const trimmedQuery = query.trim().toLowerCase();
+
   const favoritesByProvider = useMemo(() => {
+    const matches = (fav: Favorite) =>
+      !trimmedQuery || [fav.title, fav.artist, fav.album, fav.subtitle, sourceName(fav.sourceId)]
+        .some((field) => field?.toLowerCase().includes(trimmedQuery));
     const groups = new Map<string, Favorite[]>();
     for (const fav of favs.favorites) {
+      if (!matches(fav)) continue;
       const list = groups.get(fav.sourceId) ?? [];
       list.push(fav);
       groups.set(fav.sourceId, list);
@@ -57,7 +64,12 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
       list.sort((a, b) => Number(b.kind === "radio") - Number(a.kind === "radio") || a.title.localeCompare(b.title));
     }
     return [...groups.entries()].sort((a, b) => sourceName(a[0]).localeCompare(sourceName(b[0])));
-  }, [favs.favorites, sourceName]);
+  }, [favs.favorites, sourceName, trimmedQuery]);
+
+  const filteredPlaylists = useMemo(
+    () => (trimmedQuery ? playlists.filter((pl) => pl.name.toLowerCase().includes(trimmedQuery)) : playlists),
+    [playlists, trimmedQuery]
+  );
 
   const favoriteToInput = (favorite: Favorite): FavoriteInput => ({
     sourceId: favorite.sourceId, itemId: favorite.itemId, kind: favorite.kind, title: favorite.title,
@@ -254,10 +266,20 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
       <div className="section-heading"><h2>Library</h2>{groupSelect}</div>
       {status ? <div className={status.ok ? "service-result ok" : "service-result error"}>{status.message}</div> : null}
 
+      <input
+        className="library-search"
+        type="search"
+        placeholder="Search favorites and playlists…"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+
       <div className="library-section">
         <h3>Favorites</h3>
         {favs.favorites.length === 0 ? (
           <div className="empty-panel">No favorites yet. Tap the ⋯ menu on a track or album to favorite it.</div>
+        ) : favoritesByProvider.length === 0 ? (
+          <div className="empty-panel">No favorites match “{query.trim()}”.</div>
         ) : (
           favoritesByProvider.map(([sourceId, list]) => (
             <div className="library-provider" key={sourceId}>
@@ -304,9 +326,11 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
         </div>
         {playlists.length === 0 ? (
           <div className="empty-panel">No playlists yet.</div>
+        ) : filteredPlaylists.length === 0 ? (
+          <div className="empty-panel">No playlists match “{query.trim()}”.</div>
         ) : (
           <ul className="library-track-list">
-            {playlists.map((playlist) => (
+            {filteredPlaylists.map((playlist) => (
               <li key={playlist.id} className="library-track">
                 {renamingId === playlist.id ? (
                   <input className="library-rename" type="text" autoFocus value={renameText} maxLength={60}

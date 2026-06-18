@@ -37,6 +37,9 @@ export const SHOW_DEV_PANELS_PREF = boolPref("showDevPanels", "misonos:showDevPa
 // "No chrome" — hide every control (even the close X) on the full-screen cover-art
 // and VU-meter views, so a purist gets the visual undisturbed; a tap dismisses.
 export const FULLSCREEN_NO_CHROME_PREF = boolPref("fullscreenNoChrome", "misonos:fullscreenNoChrome");
+// Drag-to-reorder the queue instead of the up/down buttons. Off by default so a
+// flaky-touch device can fall back to the always-reliable buttons.
+export const QUEUE_DRAG_REORDER_PREF = boolPref("queueDragReorder", "misonos:queueDragReorder");
 // Caps how high the volume sliders can go (0–100). The slider keeps its full width
 // but represents 0..maxVolume, so the controller never sends a higher value.
 export const MAX_VOLUME_PREF = numberPref("maxVolume", "misonos:maxVolume");

@@ -1734,6 +1734,54 @@ h2 {
   cursor: pointer;
 }
 
+.queue-reorder {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.queue-reorder button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 20px;
+  border: 1px solid rgba(242, 240, 232, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: #aeb4ad;
+  cursor: pointer;
+}
+
+.queue-reorder button:first-child { border-radius: 8px 8px 0 0; }
+.queue-reorder button:last-child { border-radius: 0 0 8px 8px; border-top: none; }
+.queue-reorder button:hover:not(:disabled) { color: #f2f0e8; }
+.queue-reorder button:disabled { opacity: 0.35; cursor: default; }
+
+.queue-reorder button.queue-drag-handle {
+  height: 100%;
+  min-height: 44px;
+  border-radius: 8px;
+  border-top: 1px solid rgba(242, 240, 232, 0.1);
+  cursor: grab;
+  touch-action: none; /* don't scroll the page when a drag starts on touch */
+}
+
+.queue-reorder button.queue-drag-handle:active { cursor: grabbing; }
+
+/* Floating out of flow under the cursor; the remaining rows reflow to close the gap
+   and the green insertion line shows where it will land. Position/size are set inline. */
+.queue-item.dragging {
+  z-index: 50;
+  opacity: 0.96;
+  border-radius: 8px;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  cursor: grabbing;
+}
+
+.queue-item.drop-before { box-shadow: inset 0 3px 0 0 #91d3c4; }
+.queue-item.drop-after { box-shadow: inset 0 -3px 0 0 #91d3c4; }
+
 .queue-remove:hover {
   color: #ff8a80;
   border-color: rgba(255, 138, 128, 0.5);
@@ -2750,6 +2798,19 @@ small {
 .library-group .topbar-group {
   min-width: 160px;
 }
+
+.library-search {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(242, 240, 232, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f2f0e8;
+  font-size: 0.92rem;
+}
+
+.library-search::placeholder { color: #8b908a; }
 
 .library-provider + .library-provider {
   margin-top: 14px;

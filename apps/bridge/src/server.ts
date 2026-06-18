@@ -126,6 +126,20 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       return json(response, await service.removeQueueTrack(decodeURIComponent(queueRemoveMatch[1]), body.index));
     }
 
+    const queueClearMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/queue\/clear$/);
+    if (request.method === "POST" && queueClearMatch) {
+      return json(response, await service.clearQueue(decodeURIComponent(queueClearMatch[1])));
+    }
+
+    const queueReorderMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/queue\/reorder$/);
+    if (request.method === "POST" && queueReorderMatch) {
+      const body = await readJson<{ fromIndex: number; toIndex: number }>(request);
+      if (!Number.isInteger(body.fromIndex) || !Number.isInteger(body.toIndex) || body.fromIndex < 0 || body.toIndex < 0) {
+        return json(response, { error: "Invalid queue indices" }, 400);
+      }
+      return json(response, await service.reorderQueueTrack(decodeURIComponent(queueReorderMatch[1]), body.fromIndex, body.toIndex));
+    }
+
     const seekMatch = url.pathname.match(/^\/api\/groups\/([^/]+)\/seek$/);
     if (request.method === "POST" && seekMatch) {
       const body = await readJson<{ positionSeconds: number }>(request);
