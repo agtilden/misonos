@@ -60,6 +60,8 @@ export function App() {
   const [queueDragReorder, setQueueDragReorder] = useState<boolean>(() => readLocalPref(QUEUE_DRAG_REORDER_PREF) ?? false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
+  const [recentNudge, setRecentNudge] = useState<{ id: number; title: string; itemCount: number } | null>(null);
+  const processedNudgeTokenRef = useRef<string | null>(null);
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
   const [showDevPanels, setShowDevPanels] = useState<boolean>(() => readLocalPref(SHOW_DEV_PANELS_PREF) ?? false);
   // Volume ceiling (0–100): the sliders span 0..maxVolume, so the controller can't go louder.
@@ -312,6 +314,45 @@ export function App() {
     const timer = window.setInterval(() => setPlaybackTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [nowPlaying]);
+
+  // In-the-moment restore nudge: when a detour (radio / single stream that replaced a
+  // real music queue) STOPS and the room goes idle, offer to bring back the most
+  // recently archived queue. Never fires when a detour starts — only on the stop —
+  // and re-arms once playback resumes. Processed once per stopped URI so it neither
+  // re-polls nor re-appears after a dismiss.
+  useEffect(() => {
+    if (localMode) { setRecentNudge(null); return undefined; }
+    const coordinatorUuid = selectedGroup?.coordinatorId;
+    if (!nowPlaying || !coordinatorUuid) { setRecentNudge(null); return undefined; }
+    if (nowPlaying.state !== "STOPPED") {
+      setRecentNudge(null);
+      processedNudgeTokenRef.current = null; // re-arm for the next stop
+      return undefined;
+    }
+    const isDetour = !!nowPlaying.isLive || (!!nowPlaying.uri && queue.length <= 1);
+    if (!isDetour) return undefined;
+    const token = `${coordinatorUuid}:${nowPlaying.uri ?? "idle"}`;
+    if (processedNudgeTokenRef.current === token) return undefined;
+    processedNudgeTokenRef.current = token;
+    let cancelled = false;
+    void bridgeApi.recentQueues(coordinatorUuid)
+      .then((list) => { if (!cancelled) setRecentNudge(list.length ? { id: list[0].id, title: list[0].title, itemCount: list[0].itemCount } : null); })
+      .catch(() => { /* non-fatal */ });
+    return () => { cancelled = true; };
+  }, [nowPlaying, selectedGroup?.coordinatorId, queue.length, localMode]);
+
+  const restoreRecentQueue = async () => {
+    if (!recentNudge || !selectedGroup) return;
+    const nudge = recentNudge;
+    setRecentNudge(null);
+    try {
+      setNowPlaying(await bridgeApi.restoreRecentQueue(nudge.id, selectedGroup.id));
+      setMessage(`Restored “${nudge.title}”.`);
+      void loadQueue(selectedGroup.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not restore queue");
+    }
+  };
 
   const runTransport = async (action: TransportAction) => {
     if (!selectedGroup) return;
@@ -747,7 +788,23 @@ export function App() {
           </Suspense>
         </section>
       ) : view === "main" ? (
-      <section className="controller-grid main-view">
+      <section className={`controller-grid main-view${recentNudge ? " with-nudge" : ""}`}>
+        {recentNudge ? (
+          <div className="restore-nudge" role="status">
+            <span className="restore-nudge-text">
+              Restore your previous queue? <strong>{recentNudge.title}</strong>
+              {recentNudge.itemCount ? ` · ${recentNudge.itemCount} ${recentNudge.itemCount === 1 ? "track" : "tracks"}` : ""}
+            </span>
+            <div className="restore-nudge-actions">
+              <button type="button" className="restore-nudge-restore" onClick={() => void restoreRecentQueue()}>
+                <RotateCcw size={14} /> Restore
+              </button>
+              <button type="button" className="restore-nudge-dismiss" aria-label="Dismiss" onClick={() => setRecentNudge(null)}>
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        ) : null}
         <section className={`now-playing${isLiveStream ? " compact" : ""}`} aria-label="Now playing">
           <div className="artwork-wrap">
             <button
