@@ -1,4 +1,4 @@
-import { ArrowLeft, AudioLines, Blend, Check, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, AudioLines, Blend, Check, Gauge, Heart, Library, ListEnd, ListPlus, Moon, MoreHorizontal, Pause, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Settings, Shuffle, SkipBack, SkipForward, Star, Upload, Volume2, VolumeX, X } from "lucide-react";
 import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
@@ -9,6 +9,7 @@ import { Alarms } from "./Alarms.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { useDialogs } from "./dialogs.js";
 import { useFavorites, type FavoriteInput } from "./favorites.js";
+import { VuMeter } from "./VuMeter.js";
 import { useLocalPlayer, type LocalTrack } from "./localPlayer.js";
 import { ServiceIcon, SourcePicker } from "./SourcePicker.js";
 import { buildGroupOptions, type GroupOption } from "./groupPalette.js";
@@ -53,6 +54,7 @@ export function App() {
   const [state, setState] = useState<LoadState>("idle");
   const [view, setView] = useState<"main" | "settings" | "browse" | "editor" | "library">("main");
   const [artworkFullscreen, setArtworkFullscreen] = useState(false);
+  const [vuOpen, setVuOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
@@ -698,14 +700,19 @@ export function App() {
       ) : view === "main" ? (
       <section className="controller-grid main-view">
         <section className={`now-playing${isLiveStream ? " compact" : ""}`} aria-label="Now playing">
-          <button
-            type="button"
-            className="artwork-frame"
-            aria-label="Expand album art"
-            onClick={() => setArtworkFullscreen(true)}
-          >
-            {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
-          </button>
+          <div className="artwork-wrap">
+            <button
+              type="button"
+              className="artwork-frame"
+              aria-label="Expand album art"
+              onClick={() => setArtworkFullscreen(true)}
+            >
+              {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : <div className="artwork-fallback">Mi</div>}
+            </button>
+            <button type="button" className="artwork-vu" title="VU meter" aria-label="Open VU meter" onClick={() => setVuOpen(true)}>
+              <Gauge size={18} />
+            </button>
+          </div>
           <div className="track-copy">
             <p className="eyebrow">{localMode ? "ON THIS DEVICE" : effectiveNowPlaying?.state ?? "UNKNOWN"}</p>
             <h2>{effectiveNowPlaying?.title ?? "Nothing selected"}</h2>
@@ -951,6 +958,27 @@ export function App() {
             <p>{[nowPlaying.artist, nowPlaying.album].filter(Boolean).join(" - ")}</p>
           </div>
         </div>
+      ) : null}
+      {vuOpen ? (
+        <VuMeter
+          // Local "this device": tap the already-playing audio. Sonos: read the
+          // bridge-decoded level stream for the active track (no second download).
+          getAnalysers={localMode ? localPlayer.getAnalysers : undefined}
+          meterUrl={!localMode && activeQueueItem?.sourceId && activeQueueItem?.trackId
+            ? `/api/meter/${encodeURIComponent(activeQueueItem.sourceId)}/${encodeURIComponent(activeQueueItem.trackId)}`
+            : null}
+          getPosition={() => {
+            const base = parseSonosTime(nowPlaying?.position);
+            if (nowPlaying?.state !== "PLAYING") return base;
+            const updatedAt = nowPlaying?.updatedAt ? Date.parse(nowPlaying.updatedAt) : NaN;
+            return base + (Number.isFinite(updatedAt) ? Math.max(0, (Date.now() - updatedAt) / 1000) : 0);
+          }}
+          isLive={isLiveStream}
+          isPlaying={effectivePlaying}
+          title={effectiveNowPlaying?.title}
+          subtitle={[effectiveNowPlaying?.artist, effectiveNowPlaying?.album].filter(Boolean).join(" — ") || undefined}
+          onClose={() => setVuOpen(false)}
+        />
       ) : null}
     </main>
   );

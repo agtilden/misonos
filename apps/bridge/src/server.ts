@@ -6,6 +6,7 @@ import { SonosEventManager } from "./sonosEvents.js";
 import { SonosService } from "./sonosService.js";
 import type { Store } from "./store/index.js";
 import { proxyStream } from "./streamProxy.js";
+import { subscribeMeter } from "./meter.js";
 import { serveArt } from "./artProxy.js";
 import { deleteSourceIcon, listSourceIcons, saveSourceIcon, serveSourceIcon } from "./sourceIcons.js";
 import path from "node:path";
@@ -271,6 +272,20 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
       const sourceId = decodeURIComponent(streamMatch[1]);
       const trackId = decodeURIComponent(streamMatch[2]);
       await proxyStream(sourceId, trackId, request, response);
+      return;
+    }
+
+    // Server-side VU meter: per-window L/R levels for a track, decoded from the
+    // bytes already being proxied to the speaker (no competing second download).
+    const meterMatch = url.pathname.match(/^\/api\/meter\/([^/]+)\/([^/]+)$/);
+    if (request.method === "GET" && meterMatch) {
+      response.writeHead(200, {
+        ...corsHeaders(),
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive"
+      });
+      subscribeMeter(decodeURIComponent(meterMatch[1]), decodeURIComponent(meterMatch[2]), response);
       return;
     }
 

@@ -16,6 +16,7 @@ COPY apps/phish-smapi/package.json apps/phish-smapi/
 COPY apps/ytmusic-smapi/package.json apps/ytmusic-smapi/
 COPY apps/lma-smapi/package.json apps/lma-smapi/
 COPY apps/podcast-smapi/package.json apps/podcast-smapi/
+COPY apps/tunein-smapi/package.json apps/tunein-smapi/
 RUN npm ci
 COPY . .
 RUN npm run build
@@ -24,6 +25,9 @@ RUN npm run build
 FROM node:22-bookworm-slim AS node-runtime
 ENV NODE_ENV=production
 WORKDIR /app
+# ffmpeg decodes proxied audio for the server-side VU meter (apps/bridge/src/meter.ts).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 # node_modules carries the compiled better-sqlite3 binary and the @misonos/* symlinks,
 # which point into ./packages — so copy both. apps/* brings each service's dist.
 COPY --from=build /app/node_modules ./node_modules
