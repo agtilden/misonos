@@ -89,35 +89,50 @@ tail -f ~/Library/Logs/misonos-bridge.err.log
 
 ## Updating to a new version
 
-Run this on the closet Mac (over Screen Sharing — the `open` needs the GUI login
-session). It pulls, rebuilds, recompiles + re-signs the bundle, and relaunches.
+Run this on the closet Mac (over Screen Sharing — the relaunch needs the GUI login
+session). **One command** pulls, auto-detects the LAN IP, rebuilds + re-signs the
+bundle, stops the old processes, and relaunches:
 
 ```sh
 cd ~/Documents/projects/misonos
+deploy/macos/update.sh
+```
 
-# 1. Get the new code.
+That's it. Options:
+
+```sh
+deploy/macos/update.sh --no-pull                          # rebuild the current checkout
+MISONOS_BRIDGE_PUBLIC_HOST=192.168.68.64 deploy/macos/update.sh   # pin the IP instead of auto-detecting
+```
+
+`update.sh` rebuilds the bundle *before* stopping the old instance, so a failed
+build leaves the running app untouched. After it relaunches, confirm the speakers
+come back:
+
+```sh
+curl -s -X POST http://localhost:4317/api/discover >/dev/null
+sleep 15
+curl -s http://localhost:4317/api/zones | python3 -m json.tool | head
+```
+
+<details>
+<summary>Manual steps (what <code>update.sh</code> automates)</summary>
+
+```sh
+cd ~/Documents/projects/misonos
 git pull
-
-# 2. Stop the running app (launcher + bridge + smapi/web children).
+# Stop the running app (launcher + bridge + smapi/web children).
 pkill -f 'MiSonos.app/Contents/MacOS/misonos' 2>/dev/null
 pkill -f 'apps/bridge/dist/index.js'          2>/dev/null
 pkill -f 'tsx watch src/index.ts'             2>/dev/null
 pkill -f 'vite preview'                       2>/dev/null
 sleep 2
-
-# 3. Rebuild dist + bundle, recompile the launcher, re-sign, re-register login item.
-#    install.sh runs `npm install` first, so new deps from the pull are picked up.
+# Rebuild dist + bundle, recompile the launcher, re-sign, re-register login item.
 MISONOS_BRIDGE_PUBLIC_HOST=192.168.68.64 deploy/macos/install.sh
-
-# 4. Relaunch from the GUI session.
+# Relaunch from the GUI session.
 open ~/Applications/MiSonos.app
-sleep 5
-
-# 5. Force a LAN call, then confirm the zones come back.
-curl -s -X POST http://localhost:4317/api/discover >/dev/null
-sleep 15
-curl -s http://localhost:4317/api/zones | python3 -m json.tool | head
 ```
+</details>
 
 Sanity checks if step 5 is empty:
 
