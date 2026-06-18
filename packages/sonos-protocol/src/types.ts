@@ -318,6 +318,18 @@ export interface PlaylistItem {
   addedAt: string;
 }
 
+// A music queue auto-archived before a destructive event wiped it, restorable from the
+// Library. Keyed by the coordinator's stable zone UUID. Summary only — the track refs
+// stay on the bridge and are re-enqueued server-side on restore.
+export interface RecentQueue {
+  id: number;
+  coordinatorUuid: string;
+  title: string;
+  itemCount: number;
+  startTrack?: number | null; // 1-based track that was playing when archived
+  capturedAt: string;
+}
+
 // Live equalizer state for a single speaker (RenderingControl is per-player, Master channel).
 export interface EqState {
   id: string; // zone id

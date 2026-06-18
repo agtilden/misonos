@@ -69,6 +69,30 @@ export interface PlaylistItemTable {
   added_at: string; // ISO-8601
 }
 
+// A music queue auto-archived just before a destructive event (a replace-mode play
+// or radio detour) wiped it, so it can be restored. Keyed by the coordinator's stable
+// zone UUID; capped to the few most recent per coordinator. Immutable once captured.
+export interface RecentQueueTable {
+  id: Generated<number>;
+  coordinator_uuid: string;
+  title: string; // display label (first track title)
+  item_count: number;
+  start_track: number | null; // 1-based track that was playing — restore seeks here
+  fingerprint: string; // ordered source:track join, for dedupe
+  captured_at: string; // ISO-8601
+}
+
+export interface RecentQueueItemTable {
+  id: Generated<number>;
+  recent_queue_id: number;
+  position: number; // 0-based
+  source_id: string;
+  track_id: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+}
+
 export interface Database {
   preference: PreferenceTable;
   recently_viewed: RecentlyViewedTable;
@@ -76,4 +100,6 @@ export interface Database {
   favorite: FavoriteTable;
   playlist: PlaylistTable;
   playlist_item: PlaylistItemTable;
+  recent_queue: RecentQueueTable;
+  recent_queue_item: RecentQueueItemTable;
 }

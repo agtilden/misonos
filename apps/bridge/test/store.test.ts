@@ -223,6 +223,47 @@ describe("bridge store", () => {
     }
   });
 
+  it("archives recent queues per coordinator: dedupes, caps at 3, restores refs", async () => {
+    const store = await createStore(":memory:");
+    try {
+      const uuid = "RINCON_AAA";
+      const q = (n: string) => ({ items: [{ sourceId: "lma", trackId: `${n}1`, title: `${n} one` }, { sourceId: "lma", trackId: `${n}2`, title: `${n} two` }], startTrack: 2 });
+
+      expect(await store.listRecentQueues(uuid)).toHaveLength(0);
+
+      await store.saveRecentQueue(uuid, q("a"));
+      await store.saveRecentQueue(uuid, q("b"));
+      // Re-saving an identical queue dedupes (moves to top), not a 3rd row.
+      await store.saveRecentQueue(uuid, q("a"));
+      const afterDedup = await store.listRecentQueues(uuid);
+      expect(afterDedup).toHaveLength(2);
+      expect(afterDedup[0].title).toBe("a one"); // most-recent first
+
+      // Cap at 3 newest per coordinator.
+      await store.saveRecentQueue(uuid, q("c"));
+      await store.saveRecentQueue(uuid, q("d"));
+      const capped = await store.listRecentQueues(uuid);
+      expect(capped).toHaveLength(3);
+      expect(capped.map((r) => r.title)).toEqual(["d one", "c one", "a one"]); // b evicted
+
+      // Restore refs come back in order with the saved start track.
+      const refs = await store.getRecentQueueRefs(capped[0].id);
+      expect(refs?.items).toEqual([{ sourceId: "lma", trackId: "d1" }, { sourceId: "lma", trackId: "d2" }]);
+      expect(refs?.startTrack).toBe(2);
+
+      // Coordinators are isolated; delete removes one.
+      await store.saveRecentQueue("RINCON_BBB", q("z"));
+      expect(await store.listRecentQueues("RINCON_BBB")).toHaveLength(1);
+      await store.deleteRecentQueue(capped[0].id);
+      expect(await store.listRecentQueues(uuid)).toHaveLength(2);
+
+      // Empty input is a no-op.
+      expect(await store.saveRecentQueue(uuid, { items: [] })).toBeUndefined();
+    } finally {
+      await store.close();
+    }
+  });
+
   it("cascade-deletes playlist items when the playlist is deleted", async () => {
     const store = await createStore(":memory:");
     try {

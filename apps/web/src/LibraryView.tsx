@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, RotateCcw, Star, Trash2 } from "lucide-react";
-import type { Favorite, Playlist, PlaylistItem, PlaybackMode, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
+import type { Favorite, Playlist, PlaylistItem, PlaybackMode, RecentQueue, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
 import { bridgeApi } from "./api.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { buildGroupOptions } from "./groupPalette.js";
@@ -20,6 +20,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const dialogs = useDialogs();
   const favs = useFavorites();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [recentQueues, setRecentQueues] = useState<RecentQueue[]>([]);
   const [sources, setSources] = useState<SourceDescriptor[]>([]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<OpenPlaylist | null>(null);
@@ -28,9 +29,22 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const [renameText, setRenameText] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  // Collapsed Library sections, persisted so the choice sticks across visits. Default
+  // open; a section is collapsed when its key is truthy here.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(LIBRARY_COLLAPSE_KEY) ?? "{}"); } catch { return {}; }
+  });
+  const toggleSection = (key: string) => setCollapsed((prev) => {
+    const next = { ...prev, [key]: !prev[key] };
+    try { localStorage.setItem(LIBRARY_COLLAPSE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    return next;
+  });
 
   const groupOptions = buildGroupOptions(groups);
   const selectedGroupOption = groupOptions.find((option) => option.id === selectedGroupId) ?? groupOptions[0];
+  // Recent queues are keyed by the coordinator's stable zone UUID (the queue lives on
+  // the coordinator and follows it through grouping).
+  const coordinatorUuid = groups.find((group) => group.id === selectedGroupId)?.coordinatorId;
 
   // Favorites come from the shared hook so preset changes here and in the player
   // stay in sync; only playlists are local to this view.
@@ -38,7 +52,13 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     setPlaylists(await bridgeApi.playlists());
   }, []);
 
+  const refreshRecentQueues = useCallback(async () => {
+    if (!coordinatorUuid) { setRecentQueues([]); return; }
+    setRecentQueues(await bridgeApi.recentQueues(coordinatorUuid).catch(() => []));
+  }, [coordinatorUuid]);
+
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refreshRecentQueues(); }, [refreshRecentQueues]);
   useEffect(() => { void bridgeApi.listSources().then(setSources).catch(() => { /* non-fatal */ }); }, []);
 
   const sourceName = useCallback(
@@ -69,6 +89,11 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const filteredPlaylists = useMemo(
     () => (trimmedQuery ? playlists.filter((pl) => pl.name.toLowerCase().includes(trimmedQuery)) : playlists),
     [playlists, trimmedQuery]
+  );
+
+  const filteredRecentQueues = useMemo(
+    () => (trimmedQuery ? recentQueues.filter((rq) => rq.title.toLowerCase().includes(trimmedQuery)) : recentQueues),
+    [recentQueues, trimmedQuery]
   );
 
   const favoriteToInput = (favorite: Favorite): FavoriteInput => ({
@@ -168,6 +193,26 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     }
   };
 
+  const restoreQueue = async (rq: RecentQueue) => {
+    const groupId = requireGroup();
+    if (!groupId) return;
+    setBusy(true);
+    try {
+      await bridgeApi.restoreRecentQueue(rq.id, groupId);
+      setStatus({ ok: true, message: `Restored “${rq.title}” (${rq.itemCount} ${rq.itemCount === 1 ? "track" : "tracks"}).` });
+      await refreshRecentQueues();
+    } catch (err) {
+      setStatus({ ok: false, message: err instanceof Error ? err.message : "Could not restore queue" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismissQueue = async (rq: RecentQueue) => {
+    await bridgeApi.deleteRecentQueue(rq.id);
+    await refreshRecentQueues();
+  };
+
   const openPlaylist = async (id: number) => {
     setOpen(await bridgeApi.playlist(id));
   };
@@ -236,8 +281,11 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
               <RotateCcw size={15} /> From start
             </button>
           ) : null}
-          <button type="button" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "end")}>
-            <ListEnd size={15} /> Queue all
+          <button type="button" title="Play after the current track (keeps the queue)" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "next")}>
+            <ListPlus size={15} /> Play next
+          </button>
+          <button type="button" title="Add to the end of the queue (keeps the queue)" disabled={busy || open.items.length === 0} onClick={() => void playPlaylist(open.playlist, "end")}>
+            <ListEnd size={15} /> Add to end
           </button>
         </div>
         {status ? <div className={status.ok ? "service-result ok" : "service-result error"}>{status.message}</div> : null}
@@ -282,8 +330,33 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
         onChange={(event) => setQuery(event.target.value)}
       />
 
-      <div className="library-section">
-        <h3>Favorites</h3>
+      {recentQueues.length > 0 ? (
+        <CollapsibleSection title="Recent queues" count={recentQueues.length} open={!collapsed.recentQueues} onToggle={() => toggleSection("recentQueues")}>
+          {filteredRecentQueues.length === 0 ? (
+            <div className="empty-panel">No recent queues match “{query.trim()}”.</div>
+          ) : (
+            <ul className="library-track-list">
+              {filteredRecentQueues.map((rq) => (
+                <li key={rq.id} className="library-track">
+                  <div className="browse-track-meta">
+                    <span>{rq.title}</span>
+                    <small>
+                      {rq.itemCount} {rq.itemCount === 1 ? "track" : "tracks"} · {relativeTime(rq.capturedAt)}
+                      {rq.startTrack && rq.startTrack > 1 ? ` · was on track ${rq.startTrack}` : ""}
+                    </small>
+                  </div>
+                  <div className="browse-actions">
+                    <button type="button" className="browse-action" title="Restore this queue" aria-label="Restore queue" disabled={busy} onClick={() => void restoreQueue(rq)}><RotateCcw size={14} /></button>
+                    <button type="button" className="browse-action" title="Remove" aria-label="Remove recent queue" onClick={() => void dismissQueue(rq)}><Trash2 size={14} /></button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CollapsibleSection>
+      ) : null}
+
+      <CollapsibleSection title="Favorites" count={favs.favorites.length} open={!collapsed.favorites} onToggle={() => toggleSection("favorites")}>
         {favs.favorites.length === 0 ? (
           <div className="empty-panel">No favorites yet. Tap the ⋯ menu on a track or album to favorite it.</div>
         ) : favoritesByProvider.length === 0 ? (
@@ -322,10 +395,9 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
             </div>
           ))
         )}
-      </div>
+      </CollapsibleSection>
 
-      <div className="library-section">
-        <h3>Playlists</h3>
+      <CollapsibleSection title="Playlists" count={playlists.length} open={!collapsed.playlists} onToggle={() => toggleSection("playlists")}>
         <div className="add-to-playlist-new">
           <input type="text" placeholder="New playlist name…" value={newName} maxLength={60} disabled={busy}
             onChange={(event) => setNewName(event.target.value)}
@@ -360,11 +432,48 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
             ))}
           </ul>
         )}
-      </div>
+      </CollapsibleSection>
     </section>
+  );
+}
+
+const LIBRARY_COLLAPSE_KEY = "misonos.library.collapsed";
+
+// A Library top-level section with a click-to-collapse header. Sections are
+// independent (collapse Favorites to focus on Playlists, etc.); add future sections
+// — e.g. Recently played, radio Presets — by dropping another <CollapsibleSection>.
+function CollapsibleSection({ title, count, open, onToggle, children }: {
+  title: string;
+  count?: number;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`library-section${open ? "" : " collapsed"}`}>
+      <button type="button" className="library-section-header" aria-expanded={open} onClick={onToggle}>
+        <ChevronDown size={16} className={`library-section-chevron${open ? " open" : ""}`} aria-hidden="true" />
+        <h3>{title}</h3>
+        {typeof count === "number" ? <span className="library-section-count">{count}</span> : null}
+      </button>
+      {open ? children : null}
+    </div>
   );
 }
 
 function verb(mode: PlaybackMode): string {
   return mode === "replace" ? "Playing" : mode === "next" ? "Queued next:" : "Queued at end:";
+}
+
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
 }

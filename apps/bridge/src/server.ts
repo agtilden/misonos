@@ -53,6 +53,14 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
     sendEvent({ type: "snapshot", payload: snapshot, at: new Date().toISOString() });
   };
 
+  // Archive a queue the moment a replace is about to wipe it (fire-and-forget; the
+  // store dedupes and caps per coordinator). Never let it interfere with playback.
+  service.onQueueArchive = (archive) => {
+    void store
+      .saveRecentQueue(archive.coordinatorUuid, { items: archive.items, startTrack: archive.startTrack })
+      .catch((error) => console.warn(`[bridge] saveRecentQueue failed: ${errorMessage(error)}`));
+  };
+
   setInterval(async () => {
     if (clients.size === 0) return;
     try {
@@ -613,6 +621,28 @@ export function createServer(service: SonosService, config: BridgeConfig, store:
         await captureResume(body.groupId, nowPlaying);
       }
       return json(response, nowPlaying);
+    }
+
+    const recentQueuesMatch = url.pathname.match(/^\/api\/zones\/([^/]+)\/recent-queues$/);
+    if (request.method === "GET" && recentQueuesMatch) {
+      return json(response, await store.listRecentQueues(decodeURIComponent(recentQueuesMatch[1])));
+    }
+
+    const recentQueueRestoreMatch = url.pathname.match(/^\/api\/recent-queues\/(\d+)\/restore$/);
+    if (request.method === "POST" && recentQueueRestoreMatch) {
+      const body = await readJson<{ groupId: string }>(request);
+      if (!body.groupId) return json(response, { error: "Missing groupId" }, 400);
+      const archived = await store.getRecentQueueRefs(Number(recentQueueRestoreMatch[1]));
+      if (!archived || archived.items.length === 0) return json(response, { error: "Recent queue not found" }, 404);
+      return json(response, await service.playTrackRefs(archived.items, body.groupId, "replace", archived.startTrack ?? 1));
+    }
+
+    // POST (not DELETE) to match the bridge's POST-only write convention — CORS only
+    // advertises GET,POST,OPTIONS, so a cross-origin DELETE would fail preflight.
+    const recentQueueDismissMatch = url.pathname.match(/^\/api\/recent-queues\/(\d+)\/dismiss$/);
+    if (request.method === "POST" && recentQueueDismissMatch) {
+      await store.deleteRecentQueue(Number(recentQueueDismissMatch[1]));
+      return empty(response, 204);
     }
 
     return json(response, { error: "Not found" }, 404);

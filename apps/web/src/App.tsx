@@ -60,6 +60,9 @@ export function App() {
   const [queueDragReorder, setQueueDragReorder] = useState<boolean>(() => readLocalPref(QUEUE_DRAG_REORDER_PREF) ?? false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [message, setMessage] = useState("Ready");
+  const [recentNudge, setRecentNudge] = useState<{ id: number; title: string; itemCount: number } | null>(null);
+  const processedNudgeTokenRef = useRef<string | null>(null);
+  const lastPlayingUriRef = useRef<string | null>(null);
   const [groupPlayback, setGroupPlayback] = useState<Record<string, PlaybackState>>({});
   const [showDevPanels, setShowDevPanels] = useState<boolean>(() => readLocalPref(SHOW_DEV_PANELS_PREF) ?? false);
   // Volume ceiling (0–100): the sliders span 0..maxVolume, so the controller can't go louder.
@@ -312,6 +315,49 @@ export function App() {
     const timer = window.setInterval(() => setPlaybackTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [nowPlaying]);
+
+  // In-the-moment restore nudge: when a detour (radio / single stream that replaced a
+  // real music queue) goes idle, offer to bring back the most recently archived queue.
+  // It only fires for a stream we've actually heard PLAYING, so a fresh station's brief
+  // startup STOPPED doesn't flash — only a stop AFTER it played does. Re-arms once
+  // playback resumes; processed once per stopped URI so it neither re-polls nor reappears.
+  useEffect(() => {
+    if (localMode) { setRecentNudge(null); return; }
+    const coordinatorUuid = selectedGroup?.coordinatorId;
+    if (!nowPlaying || !coordinatorUuid) { setRecentNudge(null); return; }
+    const uri = nowPlaying.uri ?? null;
+    if (nowPlaying.state === "PLAYING") lastPlayingUriRef.current = uri;
+    // A live stream has no real "stop" — its pause IS the stop — so treat both as idle.
+    const idle = nowPlaying.state === "STOPPED" || nowPlaying.state === "PAUSED_PLAYBACK";
+    if (!idle) {
+      setRecentNudge(null);
+      processedNudgeTokenRef.current = null; // re-arm for the next stop
+      return;
+    }
+    const isDetour = !!nowPlaying.isLive || (!!uri && queue.length <= 1);
+    // Require having heard THIS stream play, so switching stations (startup STOPPED on
+    // the new URI) doesn't flash the nudge before it has begun.
+    if (!isDetour || lastPlayingUriRef.current !== uri) { setRecentNudge(null); return; }
+    const token = `${coordinatorUuid}:${uri ?? "idle"}`;
+    if (processedNudgeTokenRef.current === token) return;
+    processedNudgeTokenRef.current = token;
+    void bridgeApi.recentQueues(coordinatorUuid)
+      .then((list) => setRecentNudge(list.length ? { id: list[0].id, title: list[0].title, itemCount: list[0].itemCount } : null))
+      .catch(() => { /* non-fatal */ });
+  }, [nowPlaying, selectedGroup?.coordinatorId, queue.length, localMode]);
+
+  const restoreRecentQueue = async () => {
+    if (!recentNudge || !selectedGroup) return;
+    const nudge = recentNudge;
+    setRecentNudge(null);
+    try {
+      setNowPlaying(await bridgeApi.restoreRecentQueue(nudge.id, selectedGroup.id));
+      setMessage(`Restored “${nudge.title}”.`);
+      void loadQueue(selectedGroup.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not restore queue");
+    }
+  };
 
   const runTransport = async (action: TransportAction) => {
     if (!selectedGroup) return;
@@ -668,6 +714,23 @@ export function App() {
           </>
         )}
       </header>
+
+      {recentNudge ? (
+        <div className="restore-nudge" role="status">
+          <span className="restore-nudge-text">
+            Restore your previous queue? <strong>{recentNudge.title}</strong>
+            {recentNudge.itemCount ? ` · ${recentNudge.itemCount} ${recentNudge.itemCount === 1 ? "track" : "tracks"}` : ""}
+          </span>
+          <div className="restore-nudge-actions">
+            <button type="button" className="restore-nudge-restore" onClick={() => void restoreRecentQueue()}>
+              <RotateCcw size={14} /> Restore
+            </button>
+            <button type="button" className="restore-nudge-dismiss" aria-label="Dismiss" onClick={() => setRecentNudge(null)}>
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <section
         className="settings-page browse-page"
