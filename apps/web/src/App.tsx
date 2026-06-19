@@ -6,6 +6,7 @@ import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
+import { Locations } from "./Locations.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { useDialogs } from "./dialogs.js";
 import { useFavorites, type FavoriteInput } from "./favorites.js";
@@ -756,6 +757,7 @@ export function App() {
 
       {view === "settings" ? (
         <section className="settings-page" aria-label="Settings">
+          <Locations />
           <Preferences
             showDevPanels={showDevPanels}
             onShowDevPanelsChange={(value) => {
