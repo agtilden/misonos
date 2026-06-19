@@ -3080,3 +3080,122 @@ small {
   flex: 0 0 auto;
   color: #91d3c4;
 }
+
+/* Locations (switch to a MiSonos server on another network). */
+.settings-hint {
+  margin: 0 0 12px;
+  color: #a8aaa4;
+  font-size: 0.88rem;
+}
+
+.locations-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.location-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(242, 240, 232, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c5c7c3;
+}
+
+.location-row.current {
+  border-color: rgba(145, 211, 196, 0.5);
+  background: rgba(145, 211, 196, 0.1);
+}
+
+.location-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.location-meta > span {
+  color: #f2f0e8;
+  font-weight: 600;
+}
+
+/* Name is a click-to-rename target, styled to read as plain text. */
+.location-name {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #f2f0e8;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-name:hover {
+  text-decoration: underline dotted rgba(242, 240, 232, 0.5);
+}
+
+.location-name-edit {
+  align-self: flex-start;
+  max-width: 100%;
+  font-weight: 600;
+}
+
+.location-meta > small {
+  color: #9a9c96;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.location-badge {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(145, 211, 196, 0.18);
+  color: #91d3c4;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.location-switch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: #91d3c4;
+  color: #0c1512;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.location-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.location-add input {
+  flex: 1;
+  min-width: 140px;
+}
+
+.location-add button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
