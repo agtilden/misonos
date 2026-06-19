@@ -57,6 +57,31 @@ describe("bridge store", () => {
     }
   });
 
+  it("records recently played: newest first, dedupes by (source, track), caps at 30", async () => {
+    const store = await createStore(":memory:");
+    try {
+      await store.recordRecentlyPlayed({ sourceId: "ytm", trackId: "a", kind: "track", title: "A", artist: "X" });
+      await store.recordRecentlyPlayed({ sourceId: "ytm", trackId: "b", kind: "track", title: "B" });
+      await store.recordRecentlyPlayed({ sourceId: "tunein", trackId: "s1", kind: "radio", title: "WNYC", albumArtUri: "http://logo" });
+      // Replaying "a" moves it to the top and refreshes metadata, not a dupe.
+      await store.recordRecentlyPlayed({ sourceId: "ytm", trackId: "a", kind: "track", title: "A2", artist: "X2" });
+      const list = await store.listRecentlyPlayed();
+      expect(list.map((r) => r.trackId)).toEqual(["a", "s1", "b"]);
+      expect(list[0].title).toBe("A2");
+      expect(list[0].artist).toBe("X2");
+      expect(list[1].kind).toBe("radio");
+      expect(list[1].albumArtUri).toBe("http://logo");
+
+      // Cap at 30 newest.
+      for (let i = 0; i < 35; i++) await store.recordRecentlyPlayed({ sourceId: "ytm", trackId: `t${i}`, kind: "track", title: `T${i}` });
+      const capped = await store.listRecentlyPlayed(100);
+      expect(capped).toHaveLength(30);
+      expect(capped[0].trackId).toBe("t34"); // newest first
+    } finally {
+      await store.close();
+    }
+  });
+
   it("creates, lists, and deletes an eq preset with boolean loudness", async () => {
     const store = await createStore(":memory:");
     try {

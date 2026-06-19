@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, RotateCcw, Star, Trash2 } from "lucide-react";
-import type { Favorite, Playlist, PlaylistItem, PlaybackMode, RecentQueue, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
+import type { Favorite, Playlist, PlaylistItem, PlaybackMode, RecentlyPlayedItem, RecentQueue, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
 import { bridgeApi } from "./api.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { buildGroupOptions } from "./groupPalette.js";
@@ -21,6 +21,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const favs = useFavorites();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [recentQueues, setRecentQueues] = useState<RecentQueue[]>([]);
+  const [recentlyPlayed, setRecentlyPlayed] = useState<RecentlyPlayedItem[]>([]);
   const [sources, setSources] = useState<SourceDescriptor[]>([]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<OpenPlaylist | null>(null);
@@ -57,8 +58,13 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
     setRecentQueues(await bridgeApi.recentQueues(coordinatorUuid).catch(() => []));
   }, [coordinatorUuid]);
 
+  const refreshRecentlyPlayed = useCallback(async () => {
+    setRecentlyPlayed(await bridgeApi.recentlyPlayed().catch(() => []));
+  }, []);
+
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { void refreshRecentQueues(); }, [refreshRecentQueues]);
+  useEffect(() => { void refreshRecentlyPlayed(); }, [refreshRecentlyPlayed]);
   useEffect(() => { void bridgeApi.listSources().then(setSources).catch(() => { /* non-fatal */ }); }, []);
 
   const sourceName = useCallback(
@@ -94,6 +100,13 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const filteredRecentQueues = useMemo(
     () => (trimmedQuery ? recentQueues.filter((rq) => rq.title.toLowerCase().includes(trimmedQuery)) : recentQueues),
     [recentQueues, trimmedQuery]
+  );
+
+  const filteredRecentlyPlayed = useMemo(
+    () => (trimmedQuery
+      ? recentlyPlayed.filter((rp) => [rp.title, rp.artist, rp.album, sourceName(rp.sourceId)].some((f) => f?.toLowerCase().includes(trimmedQuery)))
+      : recentlyPlayed),
+    [recentlyPlayed, sourceName, trimmedQuery]
   );
 
   const favoriteToInput = (favorite: Favorite): FavoriteInput => ({
@@ -211,6 +224,46 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
   const dismissQueue = async (rq: RecentQueue) => {
     await bridgeApi.deleteRecentQueue(rq.id);
     await refreshRecentQueues();
+  };
+
+  const playRecentlyPlayed = async (item: RecentlyPlayedItem, mode: PlaybackMode) => {
+    const groupId = requireGroup();
+    if (!groupId) return;
+    setBusy(true);
+    try {
+      await bridgeApi.playSourceItems(item.sourceId, { trackIds: [item.trackId], groupId, mode });
+      setStatus({ ok: true, message: `${verb(mode)} “${item.title}”.` });
+    } catch (err) {
+      setStatus({ ok: false, message: err instanceof Error ? err.message : "Action failed" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const playAllRecentlyPlayed = async (mode: PlaybackMode) => {
+    const groupId = requireGroup();
+    if (!groupId) return;
+    setBusy(true);
+    try {
+      await bridgeApi.playRecentlyPlayed(groupId, mode);
+      setStatus({ ok: true, message: mode === "replace" ? "Playing recently played." : `${verb(mode)} recently played.` });
+    } catch (err) {
+      setStatus({ ok: false, message: err instanceof Error ? err.message : "Action failed" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeRecentlyPlayed = async (item: RecentlyPlayedItem) => {
+    await bridgeApi.removeRecentlyPlayed(item.sourceId, item.trackId);
+    await refreshRecentlyPlayed();
+  };
+
+  const clearRecentlyPlayed = async () => {
+    const ok = await dialogs.confirm({ message: "Clear all recently played?", confirmLabel: "Clear" });
+    if (!ok) return;
+    await bridgeApi.clearRecentlyPlayed();
+    await refreshRecentlyPlayed();
   };
 
   const openPlaylist = async (id: number) => {
@@ -348,6 +401,47 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
                   <div className="browse-actions">
                     <button type="button" className="browse-action" title="Restore this queue" aria-label="Restore queue" disabled={busy} onClick={() => void restoreQueue(rq)}><RotateCcw size={14} /></button>
                     <button type="button" className="browse-action" title="Remove" aria-label="Remove recent queue" onClick={() => void dismissQueue(rq)}><Trash2 size={14} /></button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CollapsibleSection>
+      ) : null}
+
+      {recentlyPlayed.length > 0 ? (
+        <CollapsibleSection title="Recently played" count={recentlyPlayed.length} open={!collapsed.recentlyPlayed} onToggle={() => toggleSection("recentlyPlayed")}>
+          <div className="library-playlist-actions">
+            <button type="button" title="Play all recently played as a queue" disabled={busy} onClick={() => void playAllRecentlyPlayed("replace")}>
+              <Play size={15} /> Play all
+            </button>
+            <button type="button" title="Play after the current track (keeps the queue)" disabled={busy} onClick={() => void playAllRecentlyPlayed("next")}>
+              <ListPlus size={15} /> Play next
+            </button>
+            <button type="button" title="Add to the end of the queue (keeps the queue)" disabled={busy} onClick={() => void playAllRecentlyPlayed("end")}>
+              <ListEnd size={15} /> Add to end
+            </button>
+            <button type="button" className="ghost" title="Clear recently played" disabled={busy} onClick={() => void clearRecentlyPlayed()}>
+              <Trash2 size={15} /> Clear
+            </button>
+          </div>
+          {filteredRecentlyPlayed.length === 0 ? (
+            <div className="empty-panel">No recently played match “{query.trim()}”.</div>
+          ) : (
+            <ul className="library-track-list">
+              {filteredRecentlyPlayed.map((item) => (
+                <li key={`${item.sourceId}:${item.trackId}`} className="library-track">
+                  {item.albumArtUri
+                    ? <img className="browse-thumb" src={item.albumArtUri} alt="" loading="lazy" />
+                    : <span className="browse-thumb browse-thumb-empty" aria-hidden="true">♪</span>}
+                  <div className="browse-track-meta">
+                    <span>{item.title}{item.kind === "radio" ? " (radio)" : ""}</span>
+                    <small>{[item.artist, item.album, sourceName(item.sourceId)].filter(Boolean).join(" · ")} · {relativeTime(item.playedAt)}</small>
+                  </div>
+                  <div className="browse-actions">
+                    <button type="button" className="browse-action" title="Play now" aria-label="Play now" disabled={busy} onClick={() => void playRecentlyPlayed(item, "replace")}><Play size={14} /></button>
+                    <button type="button" className="browse-action" title="Add to end" aria-label="Add to end" disabled={busy} onClick={() => void playRecentlyPlayed(item, "end")}><ListEnd size={14} /></button>
+                    <button type="button" className="browse-action" title="Remove" aria-label="Remove from recently played" onClick={() => void removeRecentlyPlayed(item)}><Trash2 size={14} /></button>
                   </div>
                 </li>
               ))}

@@ -264,6 +264,19 @@ export interface RecentlyViewedItem {
   viewedAt: string;
 }
 
+// A track or station actually played, for quick replay from the Library. Recorded from
+// now-playing transport events; deduped by (sourceId, trackId), newest first.
+export interface RecentlyPlayedItem {
+  sourceId: string;
+  trackId: string;
+  kind: "track" | "radio";
+  title: string;
+  artist?: string | null;
+  album?: string | null;
+  albumArtUri?: string | null;
+  playedAt: string;
+}
+
 export interface EqPreset {
   id: number;
   name: string;
