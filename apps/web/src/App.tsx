@@ -1814,6 +1814,13 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
   useEffect(() => { void load(); }, [load]);
 
   const registeredNames = useMemo(() => new Set(discovered?.services.map((service) => service.name.toLowerCase()) ?? []), [discovered]);
+  // True only when the WHOLE household is confirmed S2 (a Sonos household is
+  // uniformly S1 or S2). On S2 the customsd page is gone and registration is
+  // neither possible nor needed — MiSonos plays every source directly. every()
+  // (not some()) + a non-empty guard so a not-yet-discovered zone can't wrongly
+  // suppress registration on an S1 system. The bridge still decides per target
+  // zone, and reports registrationUnavailable if a stray S2 register slips through.
+  const allZonesS2 = useMemo(() => zones.length > 0 && zones.every((zone) => zone.swGen === 2), [zones]);
 
   const register = useCallback(async (presetId: string) => {
     if (!presets) return;
@@ -1837,15 +1844,17 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
         zoneId,
         hostOverride: hostOverride || undefined
       });
-      const ok = result.status === 200;
+      const ok = result.status === 200 || !!result.registrationUnavailable;
       const trimmedBody = result.body.length > 600 ? `${result.body.slice(0, 600)}…` : result.body;
       setResults((current) => ({
         ...current,
         [presetId]: {
           ok,
-          message: ok
+          message: result.status === 200
             ? `Registered as ${preset.name} via ${result.attemptedUri}. Open the Sonos app and add it from “Add a Service.”`
-            : `Speaker returned HTTP ${result.status}. URI tried: ${result.attemptedUri}.\n${trimmedBody}`
+            : result.registrationUnavailable
+              ? `No registration needed — ${preset.name} plays directly on S2. (S2 firmware has no customsd page.)`
+              : `Speaker ${result.speakerIp} returned HTTP ${result.status} from its customsd page.\n${trimmedBody}`
         }
       }));
       await load();
@@ -1871,8 +1880,8 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
             <h3>{preset.name}</h3>
             <small>{preset.description}</small>
           </div>
-          <span className={isRegistered ? "service-status registered" : "service-status pending"}>
-            {isRegistered ? "Registered" : "Not registered"}
+          <span className={isRegistered || allZonesS2 ? "service-status registered" : "service-status pending"}>
+            {isRegistered ? "Registered" : allZonesS2 ? "Plays directly" : "Not registered"}
           </span>
         </header>
         <dl>
@@ -1883,31 +1892,37 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
           <dt>Poll</dt>
           <dd>{preset.pollInterval}s</dd>
         </dl>
-        <div className="custom-service-controls">
-          <label>
-            <span>Register on speaker</span>
-            <select value={chosenZone} onChange={(event) => setZoneByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}>
-              {zones.map((zone) => (
-                <option key={zone.id} value={zone.id}>{zone.name} ({zone.ipAddress})</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Host override (optional)</span>
-            <input
-              value={hostOverride}
-              onChange={(event) => setHostByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}
-              placeholder={preset.detectedHostIp ?? "192.168.x.x"}
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => void register(preset.id)}
-            disabled={busy !== null || zones.length === 0}
-          >
-            {busy === preset.id ? "Registering..." : isRegistered ? "Re-register" : "Register"}
-          </button>
-        </div>
+        {allZonesS2 ? (
+          <p className="custom-service-note">
+            Registering on the speaker isn’t available on S2 firmware (Sonos removed the customsd page) — and isn’t needed. MiSonos streams this directly with full metadata.
+          </p>
+        ) : (
+          <div className="custom-service-controls">
+            <label>
+              <span>Register on speaker</span>
+              <select value={chosenZone} onChange={(event) => setZoneByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}>
+                {zones.map((zone) => (
+                  <option key={zone.id} value={zone.id}>{zone.name} ({zone.ipAddress})</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Host override (optional)</span>
+              <input
+                value={hostOverride}
+                onChange={(event) => setHostByPreset((current) => ({ ...current, [preset.id]: event.target.value }))}
+                placeholder={preset.detectedHostIp ?? "192.168.x.x"}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void register(preset.id)}
+              disabled={busy !== null || zones.length === 0}
+            >
+              {busy === preset.id ? "Registering..." : isRegistered ? "Re-register" : "Register"}
+            </button>
+          </div>
+        )}
         {result ? (
           <div className={result.ok ? "service-result ok" : "service-result error"}>{result.message}</div>
         ) : null}
@@ -1937,8 +1952,10 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
           {requiredPresets.length > 0 ? (
             <div className="custom-services-group">
               <div className="custom-services-group-heading">
-                <h3>Required to register</h3>
-                <p>MiSonos can’t play these until the service is registered on a speaker — playback runs through the registered Sonos service.</p>
+                <h3>{allZonesS2 ? "Plays directly" : "Required to register"}</h3>
+                <p>{allZonesS2
+                  ? "On S2, MiSonos streams these directly with full track metadata. The legacy on-speaker registration was removed from S2 firmware — and isn’t needed."
+                  : "MiSonos can’t play these until the service is registered on a speaker — playback runs through the registered Sonos service."}</p>
               </div>
               <div className="custom-services">{requiredPresets.map(renderCard)}</div>
             </div>
@@ -1947,7 +1964,9 @@ function CustomMusicServices({ zones }: CustomMusicServicesProps) {
             <div className="custom-services-group">
               <div className="custom-services-group-heading">
                 <h3>Optional</h3>
-                <p>MiSonos already plays these. Register only to also browse and play them in the official Sonos app and other controllers.</p>
+                <p>{allZonesS2
+                  ? "MiSonos already plays these directly. Adding them to the official Sonos app isn’t available on S2 firmware."
+                  : "MiSonos already plays these. Register only to also browse and play them in the official Sonos app and other controllers."}</p>
               </div>
               <div className="custom-services">{optionalPresets.map(renderCard)}</div>
             </div>

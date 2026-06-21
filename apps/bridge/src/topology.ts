@@ -1,6 +1,12 @@
 import type { SonosGroup, SonosZone } from "@misonos/sonos-protocol";
 import { allTagBlocks, attrText, selfClosingTags, tagText } from "@misonos/sonos-protocol";
 
+function parseGen(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 export function zoneFromDeviceDescription(ipAddress: string, location: string, xml: string): SonosZone {
   const uuid = (tagText(xml, "UDN") ?? `uuid:${ipAddress}`).replace(/^uuid:/, "");
   return {
@@ -9,7 +15,8 @@ export function zoneFromDeviceDescription(ipAddress: string, location: string, x
     name: tagText(xml, "roomName") ?? tagText(xml, "friendlyName") ?? ipAddress,
     ipAddress,
     location,
-    visible: true
+    visible: true,
+    swGen: parseGen(tagText(xml, "swGen"))
   };
 }
 
@@ -35,7 +42,8 @@ export function parseZoneGroupState(xml: string): { zones: SonosZone[]; groups: 
         location,
         coordinatorId,
         groupId,
-        visible: attrText(memberTag, "Invisible") !== "1"
+        visible: attrText(memberTag, "Invisible") !== "1",
+        swGen: parseGen(attrText(memberTag, "SWGen"))
       };
       zones.set(uuid, zone);
       groupZones.push(zone);

@@ -1,5 +1,10 @@
 import { networkInterfaces } from "node:os";
+import type { RegisterCustomServiceResult } from "@misonos/sonos-protocol";
 import { callSoap } from "./sonosSoap.js";
+
+// Single source of truth lives in @misonos/sonos-protocol (the web imports it too).
+// Re-export so other bridge modules can keep importing it from here.
+export type { RegisterCustomServiceResult };
 
 export type CustomServiceAuth = "Anonymous" | "UserId" | "DeviceLink" | "AppLink";
 
@@ -117,16 +122,8 @@ function isPrivateLan(ip: string): boolean {
   return false;
 }
 
-export interface RegisterCustomServiceResult {
-  status: number;
-  body: string;
-  attemptedUri: string;
-  speakerIp: string;
-  accountType?: string;
-  accountUdn?: string;
-  accountError?: string;
-  refreshError?: string;
-}
+// RegisterCustomServiceResult is defined in @misonos/sonos-protocol (imported and
+// re-exported above) so the bridge and the web app share one definition.
 
 export async function registerCustomService(options: {
   speakerIp: string;

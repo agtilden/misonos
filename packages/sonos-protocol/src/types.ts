@@ -17,6 +17,11 @@ export interface SonosZone {
   coordinatorId?: string;
   groupId?: string;
   visible: boolean;
+  // Sonos software generation: 1 = S1, 2 = S2. Parsed from the SWGen attribute
+  // in ZoneGroupState (present on real players). Undefined until discovered.
+  // Drives playback URI choice for SMAPI sources: S2 honors DIDL on plain-http
+  // audio/mp4 and has no customsd page, so it streams via the proxy instead.
+  swGen?: number;
 }
 
 export interface SonosGroup {
@@ -193,6 +198,9 @@ export interface RegisterCustomServiceResult {
   body: string;
   attemptedUri: string;
   speakerIp: string;
+  // Set when the target speaker is S2 (no customsd page): registration is neither
+  // possible nor needed — the source plays directly via the proxy. status is 0.
+  registrationUnavailable?: boolean;
   accountType?: string;
   accountUdn?: string;
   accountError?: string;
