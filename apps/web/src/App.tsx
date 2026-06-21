@@ -3,7 +3,7 @@ import { IconMusic } from "@tabler/icons-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
 import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
-import { bridgeApi, subscribeBridgeEvents } from "./api.js";
+import { artSrc, bridgeApi, subscribeBridgeEvents } from "./api.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { Locations } from "./Locations.js";
@@ -829,7 +829,7 @@ export function App() {
               aria-label="Expand album art"
               onClick={() => { setArtworkMetaOpen(true); setArtworkFullscreen(true); }}
             >
-              {effectiveNowPlaying?.albumArtUri ? <img src={effectiveNowPlaying.albumArtUri} alt="" /> : (
+              {effectiveNowPlaying?.albumArtUri ? <img src={artSrc(effectiveNowPlaying.albumArtUri)} alt="" /> : (
                 <div className="artwork-fallback" aria-label="MiSonos">
                   <svg viewBox="0 0 512 512" role="img" aria-hidden="true">
                     <g fill="currentColor">
@@ -1024,7 +1024,7 @@ export function App() {
                     onClick={() => void playPreset(preset)}
                   >
                     {preset.albumArtUri
-                      ? <img src={preset.albumArtUri} alt="" loading="lazy" />
+                      ? <img src={artSrc(preset.albumArtUri)} alt="" loading="lazy" />
                       : <span className="preset-tile-fallback" aria-hidden="true">{preset.title.slice(0, 2)}</span>}
                     <span className="preset-tile-label">{preset.title}</span>
                   </button>
@@ -1102,7 +1102,7 @@ export function App() {
               </button>
             </div>
           ) : null}
-          <img src={nowPlaying.albumArtUri} alt="" />
+          <img src={artSrc(nowPlaying.albumArtUri)} alt="" />
           {!noChrome && artworkMetaOpen ? (
             <div className="artwork-overlay-meta">
               <h2>{nowPlaying.title}</h2>
@@ -1155,7 +1155,7 @@ interface BrowseCrumb {
 function BrowseThumb({ src }: { src?: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) return <span className="browse-thumb browse-thumb-empty" aria-hidden="true">♪</span>;
-  return <img className="browse-thumb" src={src} alt="" loading="lazy" onError={() => setFailed(true)} />;
+  return <img className="browse-thumb" src={artSrc(src)} alt="" loading="lazy" onError={() => setFailed(true)} />;
 }
 
 function SourceBrowser({ groups, selectedGroupId, onSelectGroup, customIcons }: SourceBrowserProps) {

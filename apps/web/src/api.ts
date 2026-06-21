@@ -26,6 +26,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+// Resolve album art to a renderable `<img src>`. Absolute http(s) art — notably
+// YouTube Music's yt3 CDN — gets hotlink-throttled when a search/browse loads ~20
+// thumbnails at once, so route it through the bridge's caching `/api/art` proxy.
+// Relative/local art (and data: URIs) passes through unchanged: the proxy resolves
+// `u=` with `new URL()`, which only succeeds on absolute URLs. The bridge is served
+// same-origin as the app, so a relative `/api/art` path stays correct even after
+// switching locations (see servers.ts).
+export function artSrc(uri?: string | null): string | undefined {
+  if (!uri) return undefined;
+  return /^https?:\/\//i.test(uri) ? `/api/art?u=${encodeURIComponent(uri)}` : uri;
+}
+
 export const bridgeApi = {
   discover: () => request<BridgeSnapshot>("/api/discover", { method: "POST", body: "{}" }),
   zones: () => request<SonosZone[]>("/api/zones"),
