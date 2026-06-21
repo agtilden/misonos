@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronUp, ChevronDown, ListEnd, ListPlus, Play, Plus, RotateCcw, Star, Trash2 } from "lucide-react";
 import type { Favorite, Playlist, PlaylistItem, PlaybackMode, RecentlyPlayedItem, RecentQueue, SonosGroup, SourceDescriptor } from "@misonos/sonos-protocol";
-import { bridgeApi } from "./api.js";
+import { artSrc, bridgeApi } from "./api.js";
 import { GroupDropdown } from "./GroupDropdown.js";
 import { buildGroupOptions } from "./groupPalette.js";
 import { useDialogs } from "./dialogs.js";
@@ -432,7 +432,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
               {filteredRecentlyPlayed.map((item) => (
                 <li key={`${item.sourceId}:${item.trackId}`} className="library-track">
                   {item.albumArtUri
-                    ? <img className="browse-thumb" src={item.albumArtUri} alt="" loading="lazy" />
+                    ? <img className="browse-thumb" src={artSrc(item.albumArtUri)} alt="" loading="lazy" />
                     : <span className="browse-thumb browse-thumb-empty" aria-hidden="true">♪</span>}
                   <div className="browse-track-meta">
                     <span>{item.title}{item.kind === "radio" ? " (radio)" : ""}</span>
@@ -466,7 +466,7 @@ export function LibraryView({ groups, selectedGroupId, onSelectGroup }: LibraryV
                 {list.map((favorite) => (
                   <li key={favorite.id} className="library-track">
                     {favorite.albumArtUri
-                      ? <img className="browse-thumb" src={favorite.albumArtUri} alt="" loading="lazy" />
+                      ? <img className="browse-thumb" src={artSrc(favorite.albumArtUri)} alt="" loading="lazy" />
                       : <span className="browse-thumb browse-thumb-empty" aria-hidden="true">♪</span>}
                     <div className="browse-track-meta">
                       <span>{favorite.title}{favorite.kind === "album" ? " (album)" : favorite.kind === "radio" ? " (radio)" : ""}</span>
