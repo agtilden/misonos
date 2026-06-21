@@ -779,6 +779,14 @@ export class SonosService {
     });
     const bridgeHost = this.publicHost();
     if (!bridgeHost) throw new Error("Could not determine bridge LAN IP for stream proxy");
+    // S1 firmware drops DIDL metadata on plain-http audio/mp4 URIs, so SMAPI
+    // sources (YT Music) must go out as x-sonos-http:…sid= there — which only
+    // resolves once the service is registered via the speaker's customsd page.
+    // S2 firmware (a) honors buildDidl's metadata on plain http — verified on
+    // 86.2: title/artist/album/art all stick — and (b) returns 403 for customsd,
+    // so on S2 we route those sources through the stream proxy like every other
+    // source: full metadata in Now Playing, and no registration required.
+    const coordinatorIsS2 = coordinator.swGen === 2;
     const queueItems = tracks.map((track, index) => {
       const ref = refs[index];
       const ext = extensionForMime(track.mimeType);
@@ -789,7 +797,7 @@ export class SonosService {
       // for the actual URL + metadata. Required for non-mp3 streams
       // (audio/mp4) where S1 ignores DIDL on plain http URIs.
       const smapi = SMAPI_SOURCE_INFO[ref.sourceId];
-      if (smapi) {
+      if (smapi && !coordinatorIsS2) {
         // sid here is the raw sid in the URI; serviceTokenMagic (sid*256) is
         // what goes into the <desc> SA_RINCON binding, not the URI sid.
         const smapiUri = `x-sonos-http:${encodeURIComponent(ref.trackId)}${ext}?sid=${smapi.sid}&flags=8224&sn=${smapi.sn}`;
@@ -939,6 +947,19 @@ export class SonosService {
     const preset = getPreset(options.presetId);
     if (!preset) throw new Error(`Unknown preset: ${options.presetId}`);
     const zone = await this.requireZone(options.zoneId);
+    // S2 firmware removed the customsd page (returns 403), so on-speaker
+    // registration isn't possible there — and isn't needed: MiSonos streams
+    // these sources directly with full metadata. Short-circuit with a clear
+    // result instead of POSTing into a guaranteed 403.
+    if (zone.swGen === 2) {
+      return {
+        status: 0,
+        body: "S2 firmware has no customsd page, so on-speaker registration isn't available. MiSonos plays this source directly with full metadata — no registration needed.",
+        attemptedUri: options.uriOverride ?? "",
+        speakerIp: zone.ipAddress,
+        registrationUnavailable: true
+      };
+    }
     const host = options.hostOverride ?? detectLanIp();
     if (!options.uriOverride && !host) throw new Error("Could not detect LAN IP; provide uri override");
     const uri = options.uriOverride ?? buildServiceUri(preset, host as string);

@@ -18,6 +18,13 @@ describe("bridge parsing", () => {
     expect(topology.zones.map((zone) => zone.ipAddress)).toEqual(["10.0.0.2", "10.0.0.3"]);
   });
 
+  it("parses the SWGen software generation when present (drives S2 proxy routing)", () => {
+    const state = `<ZoneGroups><ZoneGroup Coordinator="RINCON_A" ID="RINCON_A:1"><ZoneGroupMember UUID="RINCON_A" Location="http://10.0.0.2:1400/xml/zone_player.xml" ZoneName="Den" SWGen="2"/><ZoneGroupMember UUID="RINCON_B" Location="http://10.0.0.3:1400/xml/zone_player.xml" ZoneName="Legacy" SWGen="1"/><ZoneGroupMember UUID="RINCON_C" Location="http://10.0.0.4:1400/xml/zone_player.xml" ZoneName="Unknown"/></ZoneGroup></ZoneGroups>`;
+    const topology = parseZoneGroupState(state);
+    const byName = Object.fromEntries(topology.zones.map((zone) => [zone.name, zone.swGen]));
+    expect(byName).toEqual({ Den: 2, Legacy: 1, Unknown: undefined });
+  });
+
   it("uses real Sonos service control paths", () => {
     expect(controlUrlForService("AVTransport")).toBe("/MediaRenderer/AVTransport/Control");
     expect(controlUrlForService("RenderingControl")).toBe("/MediaRenderer/RenderingControl/Control");

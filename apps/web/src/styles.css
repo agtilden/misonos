@@ -829,6 +829,17 @@ h2 {
   cursor: not-allowed;
 }
 
+.custom-service-note {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #aeb4ad;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(242, 240, 232, 0.12);
+  border-radius: 6px;
+  padding: 9px 11px;
+}
+
 .service-result {
   border-radius: 6px;
   padding: 8px 10px;
