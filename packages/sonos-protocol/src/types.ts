@@ -198,6 +198,9 @@ export interface RegisterCustomServiceResult {
   body: string;
   attemptedUri: string;
   speakerIp: string;
+  // Set when the target speaker is S2 (no customsd page): registration is neither
+  // possible nor needed — the source plays directly via the proxy. status is 0.
+  registrationUnavailable?: boolean;
   accountType?: string;
   accountUdn?: string;
   accountError?: string;
