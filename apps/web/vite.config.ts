@@ -35,7 +35,9 @@ export default defineConfig({
         runtimeCaching: [
           {
             // Album art is keyed by the encoded upstream URL, so it's safe to cache.
-            urlPattern: ({ url }) => url.pathname === "/api/art",
+            // Same-origin only — art from a switched-to (cross-origin) backend bypasses
+            // the SW and loads directly, like the rest of that host's API.
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname === "/api/art",
             handler: "CacheFirst",
             options: {
               cacheName: "album-art",
@@ -44,10 +46,11 @@ export default defineConfig({
             }
           },
           {
-            // Every other bridge call always hits the network and is never cached.
+            // Same-origin bridge calls always hit the network and are never cached.
             // A registered route stops workbox falling through to "No route found".
-            // The SSE stream is left to bypass the SW entirely.
-            urlPattern: ({ url }) => url.pathname.startsWith("/api/") && url.pathname !== "/api/events",
+            // Cross-origin calls (to a switched-to backend) and the SSE stream are left
+            // to bypass the SW entirely so they go straight to the target host.
+            urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith("/api/") && url.pathname !== "/api/events",
             handler: "NetworkOnly"
           }
         ]

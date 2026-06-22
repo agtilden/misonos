@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { artSrc } from "./api.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { artSrc, bridgeApi } from "./api.js";
 
 describe("artSrc", () => {
   it("routes absolute http(s) art through the caching /api/art proxy", () => {
@@ -27,5 +27,30 @@ describe("artSrc", () => {
     expect(artSrc(undefined)).toBeUndefined();
     expect(artSrc(null)).toBeUndefined();
     expect(artSrc("")).toBeUndefined();
+  });
+});
+
+describe("request() stays a CORS-simple request (never preflights cross-origin)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stubFetch(body: string) {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      () => Promise.resolve(new Response(body, { status: 200, headers: { "Content-Type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("omits Content-Type on bodyless GETs", async () => {
+    const fetchMock = stubFetch("[]");
+    await bridgeApi.zones();
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    expect(headers.has("Content-Type")).toBe(false); // no header → simple request, no preflight
+  });
+
+  it("uses a simple text/plain Content-Type on POST bodies (the bridge parses JSON by content)", async () => {
+    const fetchMock = stubFetch("{}");
+    await bridgeApi.discover();
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    expect(headers.get("Content-Type")).toBe("text/plain;charset=UTF-8");
   });
 });
