@@ -11,13 +11,17 @@ export interface AddPlaylistItemInput {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers
-    }
-  });
+  // Use only CORS-"simple" request headers so a call to a switched-to backend never
+  // triggers a preflight (OPTIONS). Cross-origin preflights fail against the other
+  // host, which broke every fetch-based load after switching locations, while the
+  // preflight-free SSE stream kept working. The bridge parses bodies with JSON.parse
+  // regardless of Content-Type, so text/plain (a simple type) is safe; callers that set
+  // their own type (e.g. icon upload) keep it.
+  const headers = new Headers(init?.headers);
+  if (init?.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "text/plain;charset=UTF-8");
+  }
+  const response = await fetch(apiUrl(path), { ...init, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error ?? `Request failed: ${response.status}`);
