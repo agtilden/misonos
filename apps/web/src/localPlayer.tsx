@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { QueueItem } from "@misonos/sonos-protocol";
+import { apiUrl } from "./servers.js";
 
 export interface LocalTrack {
   sourceId: string;
@@ -49,8 +50,8 @@ interface LocalPlayerApi {
 const LocalPlayerContext = createContext<LocalPlayerApi | null>(null);
 
 function streamUrl(track: LocalTrack): string {
-  // Same-origin; the bridge stream proxy resolves + serves browser-playable audio.
-  return `/api/stream/${encodeURIComponent(track.sourceId)}/${encodeURIComponent(track.trackId)}`;
+  // The selected backend's stream proxy resolves + serves browser-playable audio.
+  return apiUrl(`/api/stream/${encodeURIComponent(track.sourceId)}/${encodeURIComponent(track.trackId)}`);
 }
 
 // Independent in-browser audio engine. Surfaced as a Play-to target ("This device")
