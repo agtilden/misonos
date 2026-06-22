@@ -1,7 +1,12 @@
 // Saved MiSonos "locations" — each is a full MiSonos host (web + bridge) on some
-// network. Switching is just navigating the browser to that host's URL: it serves its
-// own app and bridge same-origin, so there's nothing cross-origin to configure. The
-// list is persisted per-origin and travels via a URL param so it shows up everywhere.
+// network. The app shell is always served from ONE origin (the "home" host you
+// installed/opened it from); switching locations does NOT navigate there. Instead
+// it repoints the API base at the chosen backend, so every /api call (fetch + SSE)
+// goes cross-origin to that host. The bridge already answers with permissive CORS,
+// so nothing cross-origin needs configuring. Keeping the browser on one origin is
+// the whole point: an installed PWA is locked to the origin it was installed from,
+// and navigating away from it triggers Chrome's out-of-scope banner. The saved list
+// lives in the home origin's localStorage.
 
 export interface MisonosServer {
   name: string;
@@ -9,14 +14,44 @@ export interface MisonosServer {
 }
 
 const STORAGE_KEY = "misonos.servers";
-const PROPAGATE_PARAM = "misonos-servers";
+const API_BASE_KEY = "misonos.apiBase";
 
-export function currentOrigin(): string {
+/** The origin the app shell is served from — where the PWA is installed / in scope. */
+export function homeOrigin(): string {
   return window.location.origin;
 }
 
+/** Origin of the backend API calls currently target ("" stored ⇒ home). */
+export function apiBase(): string {
+  try {
+    return localStorage.getItem(API_BASE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Prefix an /api path with the selected backend origin (no-op when home). */
+export function apiUrl(path: string): string {
+  return apiBase() + path;
+}
+
+/** Point the API at `origin`; clearing (or selecting home) reverts to same-origin. */
+function setApiBase(origin: string): void {
+  try {
+    if (!origin || origin === homeOrigin()) localStorage.removeItem(API_BASE_KEY);
+    else localStorage.setItem(API_BASE_KEY, origin);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The backend in use right now (selected base, or home when none is selected). */
+export function currentServerUrl(): string {
+  return apiBase() || homeOrigin();
+}
+
 export function isCurrent(server: MisonosServer): boolean {
-  return server.url === currentOrigin();
+  return server.url === currentServerUrl();
 }
 
 /** Coerce free-form input ("shore:4317", "http://x:4317/") to a canonical origin, or null. */
@@ -57,48 +92,28 @@ function dedupe(list: MisonosServer[]): MisonosServer[] {
   return out;
 }
 
-// Always include the origin we're served from, so "here" is visible and labelled.
-function withCurrent(list: MisonosServer[]): MisonosServer[] {
-  const here = currentOrigin();
+// Always include the home origin, so "here" is visible, labelled, and switchable-back-to.
+function withHome(list: MisonosServer[]): MisonosServer[] {
+  const here = homeOrigin();
   return list.some((s) => s.url === here) ? list : [...list, { name: window.location.hostname || "This server", url: here }];
 }
 
 export function loadServers(): MisonosServer[] {
-  return withCurrent(dedupe(readRaw()));
+  return withHome(dedupe(readRaw()));
 }
 
 export function saveServers(list: MisonosServer[]): MisonosServer[] {
-  const next = withCurrent(dedupe(list));
+  const next = withHome(dedupe(list));
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   return next;
 }
 
-// On startup: merge any locations passed in via the propagate param, then strip it
-// from the URL so it doesn't linger. Call once before the app reads the list.
-export function importServersFromUrl(): void {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const raw = params.get(PROPAGATE_PARAM);
-    if (!raw) { saveServers(readRaw()); return; }
-    const incoming = JSON.parse(raw);
-    saveServers([...readRaw(), ...(Array.isArray(incoming) ? incoming : [])]);
-    params.delete(PROPAGATE_PARAM);
-    const qs = params.toString();
-    window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
-  } catch {
-    saveServers(readRaw());
-  }
-}
-
-// Navigate this tab to another location, carrying the whole list so it propagates.
-export function switchToServer(target: MisonosServer, all: MisonosServer[]): void {
+// Repoint the app at another location's backend, then reload (same origin, so the
+// PWA stays in scope and no out-of-scope banner appears). A fresh load re-opens the
+// SSE stream and re-fetches all state against the newly-selected backend.
+export function switchToServer(target: MisonosServer): void {
   const origin = normalizeUrl(target.url);
   if (!origin) return;
-  try {
-    const dest = new URL(origin);
-    dest.searchParams.set(PROPAGATE_PARAM, JSON.stringify(dedupe(all)));
-    window.location.href = dest.toString();
-  } catch {
-    window.location.href = origin;
-  }
+  setApiBase(origin);
+  window.location.reload();
 }

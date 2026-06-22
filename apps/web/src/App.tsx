@@ -4,6 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { BridgeSnapshot, EqPayload, EqPreset, EqPresetValues, EqState, Favorite, NowPlaying, PlaybackState, QueueItem, RepeatMode, SonosGroup, SonosZone, SourceBrowseItem, TransportAction, VolumeState } from "@misonos/sonos-protocol";
 import { BUILT_IN_EQ_PRESETS } from "@misonos/sonos-protocol";
 import { artSrc, bridgeApi, subscribeBridgeEvents } from "./api.js";
+import { apiUrl } from "./servers.js";
 import { AddToPlaylistModal } from "./AddToPlaylistModal.js";
 import { Alarms } from "./Alarms.js";
 import { Locations } from "./Locations.js";
@@ -1120,7 +1121,7 @@ export function App() {
           // bridge-decoded level stream for the active track (no second download).
           getAnalysers={localMode ? localPlayer.getAnalysers : undefined}
           meterUrl={!localMode && activeQueueItem?.sourceId && activeQueueItem?.trackId
-            ? `/api/meter/${encodeURIComponent(activeQueueItem.sourceId)}/${encodeURIComponent(activeQueueItem.trackId)}`
+            ? apiUrl(`/api/meter/${encodeURIComponent(activeQueueItem.sourceId)}/${encodeURIComponent(activeQueueItem.trackId)}`)
             : null}
           getPosition={() => {
             const base = parseSonosTime(nowPlaying?.position);

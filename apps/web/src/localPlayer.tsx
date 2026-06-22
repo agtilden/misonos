@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { QueueItem } from "@misonos/sonos-protocol";
+import { artSrc } from "./api.js";
+import { apiUrl } from "./servers.js";
 
 export interface LocalTrack {
   sourceId: string;
@@ -49,8 +51,8 @@ interface LocalPlayerApi {
 const LocalPlayerContext = createContext<LocalPlayerApi | null>(null);
 
 function streamUrl(track: LocalTrack): string {
-  // Same-origin; the bridge stream proxy resolves + serves browser-playable audio.
-  return `/api/stream/${encodeURIComponent(track.sourceId)}/${encodeURIComponent(track.trackId)}`;
+  // The selected backend's stream proxy resolves + serves browser-playable audio.
+  return apiUrl(`/api/stream/${encodeURIComponent(track.sourceId)}/${encodeURIComponent(track.trackId)}`);
 }
 
 // Independent in-browser audio engine. Surfaced as a Play-to target ("This device")
@@ -237,11 +239,14 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     if (!current) { navigator.mediaSession.metadata = null; return; }
+    // Route art through artSrc so lock-screen artwork resolves against the selected
+    // backend (and the caching /api/art proxy), not the shell host, after switching.
+    const artwork = artSrc(current.albumArtUri);
     navigator.mediaSession.metadata = new MediaMetadata({
       title: current.title,
       artist: current.artist ?? "",
       album: current.album ?? "",
-      artwork: current.albumArtUri ? [{ src: current.albumArtUri }] : []
+      artwork: artwork ? [{ src: artwork }] : []
     });
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
     navigator.mediaSession.setActionHandler("play", () => toggle());
@@ -263,6 +268,11 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
       {children}
       <audio
         ref={audioRef}
+        // CORS-enable the element so the VU meter's Web Audio graph
+        // (createMediaElementSource) can read the stream — and doesn't mute it — when
+        // the controller is pointed at another location's (cross-origin) backend. The
+        // stream proxy answers with Access-Control-Allow-Origin: * to match.
+        crossOrigin="anonymous"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onPlaying={() => setPlaying(true)}

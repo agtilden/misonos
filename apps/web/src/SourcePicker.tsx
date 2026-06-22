@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { apiUrl } from "./servers.js";
 
 interface SourceOption {
   id: string;
@@ -33,7 +34,7 @@ export function ServiceIcon({ sourceId, customVersion }: { sourceId: string; cus
     return (
       <img
         className="service-icon"
-        src={`/api/source-icons/${encodeURIComponent(sourceId)}?v=${encodeURIComponent(customVersion ?? "")}`}
+        src={apiUrl(`/api/source-icons/${encodeURIComponent(sourceId)}?v=${encodeURIComponent(customVersion ?? "")}`)}
         alt=""
         aria-hidden="true"
         onError={() => setStage(KNOWN_ICONS.has(sourceId) ? "builtin" : "glyph")}

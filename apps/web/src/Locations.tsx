@@ -3,8 +3,9 @@ import { ArrowRightCircle, MapPin, Plus, Trash2 } from "lucide-react";
 import { isCurrent, loadServers, normalizeUrl, saveServers, switchToServer, type MisonosServer } from "./servers.js";
 
 // Switch the app between MiSonos hosts on different networks (e.g. a different house).
-// Each host serves its own app + bridge same-origin, so "switching" is just navigating
-// the browser there; the saved list travels along so it appears at every location.
+// "Switching" repoints the API at the chosen host's bridge and reloads in place — the
+// browser stays on the origin it was opened from, so an installed PWA never leaves its
+// scope (which is what triggers Chrome's out-of-scope banner). See servers.ts.
 export function Locations() {
   const [servers, setServers] = useState<MisonosServer[]>(() => loadServers());
   const [name, setName] = useState("");
@@ -62,7 +63,7 @@ export function Locations() {
               <span className="location-badge">Connected</span>
             ) : (
               <>
-                <button type="button" className="location-switch" onClick={() => switchToServer(server, servers)} title={`Switch to ${server.name}`}>
+                <button type="button" className="location-switch" onClick={() => switchToServer(server)} title={`Switch to ${server.name}`}>
                   <ArrowRightCircle size={16} /> Switch
                 </button>
                 <button type="button" className="icon-button compact" aria-label={`Remove ${server.name}`} onClick={() => remove(server)}>

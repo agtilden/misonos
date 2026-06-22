@@ -1,4 +1,5 @@
 import type { Alarm, AlarmInput, BridgeEvent, BridgeSnapshot, BrowseResult, CustomServicePresetView, EqPayload, EqPreset, EqState, Favorite, MusicServiceDiscovery, NowPlaying, PlaybackMode, Playlist, PlaylistItem, Preference, QueueItem, RecentlyPlayedItem, RecentlyViewedItem, RecentQueue, RegisterCustomServiceResult, RepeatMode, SonosAccountsResponse, SonosDeviceInfo, SonosGroup, SonosZone, SourceBrowseResponse, SourceDescriptor, SourceItemKind, TransportAction, VolumePayload, VolumeState } from "@misonos/sonos-protocol";
+import { apiUrl } from "./servers.js";
 
 export interface AddPlaylistItemInput {
   id: string;
@@ -10,7 +11,7 @@ export interface AddPlaylistItemInput {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -29,13 +30,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // Resolve album art to a renderable `<img src>`. Absolute http(s) art — notably
 // YouTube Music's yt3 CDN — gets hotlink-throttled when a search/browse loads ~20
 // thumbnails at once, so route it through the bridge's caching `/api/art` proxy.
-// Relative/local art (and data: URIs) passes through unchanged: the proxy resolves
-// `u=` with `new URL()`, which only succeeds on absolute URLs. The bridge is served
-// same-origin as the app, so a relative `/api/art` path stays correct even after
+// data: URIs pass through unchanged. Anything routed to (or already on) the bridge —
+// the `/api/art` wrapper, plus any root-relative path — is resolved against the
+// selected backend so art loads from the same host as the rest of the API after
 // switching locations (see servers.ts).
 export function artSrc(uri?: string | null): string | undefined {
   if (!uri) return undefined;
-  return /^https?:\/\//i.test(uri) ? `/api/art?u=${encodeURIComponent(uri)}` : uri;
+  if (/^https?:\/\//i.test(uri)) return apiUrl(`/api/art?u=${encodeURIComponent(uri)}`);
+  return uri.startsWith("/") ? apiUrl(uri) : uri;
 }
 
 export const bridgeApi = {
@@ -230,7 +232,7 @@ export interface SourceIconMeta {
 }
 
 export function subscribeBridgeEvents(onEvent: (event: BridgeEvent) => void, onError: () => void): () => void {
-  const source = new EventSource("/api/events");
+  const source = new EventSource(apiUrl("/api/events"));
   const handler = (message: MessageEvent<string>) => onEvent(JSON.parse(message.data) as BridgeEvent);
   source.addEventListener("snapshot", handler as EventListener);
   source.addEventListener("now-playing", handler as EventListener);
