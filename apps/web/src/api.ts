@@ -10,7 +10,7 @@ export interface AddPlaylistItemInput {
   durationSeconds?: number;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   // Use only CORS-"simple" request headers so a call to a switched-to backend never
   // triggers a preflight (OPTIONS). Cross-origin preflights fail against the other
   // host, which broke every fetch-based load after switching locations, while the
@@ -21,7 +21,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body != null && !headers.has("Content-Type")) {
     headers.set("Content-Type", "text/plain;charset=UTF-8");
   }
-  const response = await fetch(apiUrl(path), { ...init, headers });
+  // Without a deadline, a backend that accepts the connection but never answers (a
+  // wedged process, a half-open socket after a reboot, an unreachable switched-to
+  // host) leaves the await pending forever — so the UI hangs in "loading" with no
+  // error. Bound the snapshot calls so a stall surfaces as an error the user can
+  // retry. Callers that pass their own signal keep it; only opt-in callers get a timeout.
+  const signal = init?.signal ?? (timeoutMs != null ? AbortSignal.timeout(timeoutMs) : undefined);
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), { ...init, headers, signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new Error("Bridge did not respond — it may be offline or unreachable.");
+    }
+    throw error;
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error ?? `Request failed: ${response.status}`);
@@ -45,9 +59,11 @@ export function artSrc(uri?: string | null): string | undefined {
 }
 
 export const bridgeApi = {
-  discover: () => request<BridgeSnapshot>("/api/discover", { method: "POST", body: "{}" }),
-  zones: () => request<SonosZone[]>("/api/zones"),
-  groups: () => request<SonosGroup[]>("/api/groups"),
+  // 15s comfortably exceeds the bridge's bounded discovery sweep (~11s worst case)
+  // while still converting a never-answering backend into a retryable error.
+  discover: () => request<BridgeSnapshot>("/api/discover", { method: "POST", body: "{}" }, 15_000),
+  zones: () => request<SonosZone[]>("/api/zones", undefined, 15_000),
+  groups: () => request<SonosGroup[]>("/api/groups", undefined, 15_000),
   nowPlaying: (groupId: string) => request<NowPlaying>(`/api/groups/${encodeURIComponent(groupId)}/now-playing`),
   queue: (groupId: string) => request<QueueItem[]>(`/api/groups/${encodeURIComponent(groupId)}/queue`),
   groupVolume: (groupId: string) => request<VolumeState>(`/api/groups/${encodeURIComponent(groupId)}/volume`),

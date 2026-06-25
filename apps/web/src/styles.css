@@ -116,7 +116,11 @@ button {
 .status-popover {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  /* The dot sits in the last (right-aligned) topbar column, so anchor the popover
+     to the right edge — anchoring left made it grow rightward off narrow screens.
+     Clamp the width to the viewport so it stays legible on mobile. */
+  right: 0;
+  left: auto;
   z-index: 80;
   display: grid;
   gap: 6px;
@@ -127,7 +131,14 @@ button {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
   padding: 10px 12px;
   font-size: 0.85rem;
+  width: max-content;
   min-width: 200px;
+  max-width: calc(100vw - 24px);
+}
+
+.status-popover strong {
+  /* A long error message must wrap rather than force the popover off-screen. */
+  overflow-wrap: anywhere;
 }
 
 .status-popover small {

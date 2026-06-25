@@ -54,3 +54,21 @@ describe("request() stays a CORS-simple request (never preflights cross-origin)"
     expect(headers.get("Content-Type")).toBe("text/plain;charset=UTF-8");
   });
 });
+
+describe("snapshot calls bound a stalled backend with a timeout", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("passes an AbortSignal so a never-answering bridge can't hang the UI forever", async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      () => Promise.resolve(new Response("[]", { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    await bridgeApi.groups();
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("translates a fetch TimeoutError into a retryable, human-readable message", async () => {
+    vi.stubGlobal("fetch", vi.fn(() =>
+      Promise.reject(new DOMException("The operation timed out.", "TimeoutError"))));
+    await expect(bridgeApi.discover()).rejects.toThrow(/offline or unreachable/);
+  });
+});
