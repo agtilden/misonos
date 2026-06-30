@@ -63,6 +63,11 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   // Once attached, the element's output flows through `gain` (so volume/mute keep
   // working) and `splitter` feeds the per-channel analysers.
   const audioGraphRef = useRef<{ ctx: AudioContext; gain: GainNode; left: AnalyserNode; right: AnalyserNode } | null>(null);
+  // Whether we *want* audio playing. On mobile, a programmatic play() after a src
+  // swap between tracks is often rejected/deferred (autoplay policy, background
+  // throttling) — the element ends up loaded but paused ("stuck between tracks").
+  // We retry play() from onCanPlay whenever intent is set but the element is paused.
+  const intendPlayingRef = useRef(false);
   const [queue, setQueue] = useState<LocalTrack[]>([]);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -81,7 +86,10 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     setIndex(idx);
     setPosition(0);
     setDuration(0);
+    intendPlayingRef.current = true;
     audio.src = streamUrl(track);
+    // play() may reject here on mobile (not ready yet / backgrounded); onCanPlay
+    // retries once the stream is ready and intent is still set.
     void audio.play().catch(() => undefined);
   }, []);
 
@@ -101,7 +109,7 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
 
   const next = useCallback(() => {
     if (index + 1 < queue.length) loadAndPlay(index + 1, queue);
-    else { audioRef.current?.pause(); setPlaying(false); }
+    else { intendPlayingRef.current = false; audioRef.current?.pause(); setPlaying(false); }
   }, [index, queue, loadAndPlay]);
 
   const prev = useCallback(() => {
@@ -116,11 +124,11 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   const toggle = useCallback(() => {
     const audio = audioRef.current;
     if (!audio || !current) return;
-    if (audio.paused) void audio.play().catch(() => undefined);
-    else audio.pause();
+    if (audio.paused) { intendPlayingRef.current = true; void audio.play().catch(() => undefined); }
+    else { intendPlayingRef.current = false; audio.pause(); }
   }, [current]);
 
-  const pause = useCallback(() => { audioRef.current?.pause(); }, []);
+  const pause = useCallback(() => { intendPlayingRef.current = false; audioRef.current?.pause(); }, []);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -133,7 +141,15 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     if (idx === index) {
       // Removed the current track: play whatever shifts into its slot, else stop.
       if (idx < nextQueue.length) loadAndPlay(idx, nextQueue);
-      else { audioRef.current?.pause(); setPlaying(false); setIndex(Math.max(0, nextQueue.length - 1)); }
+      else {
+        // Nothing shifts into the slot: stop for real. Clear intent and detach the
+        // src so a late canplay can't retry play() on the removed track.
+        intendPlayingRef.current = false;
+        const audio = audioRef.current;
+        if (audio) { audio.pause(); audio.removeAttribute("src"); audio.load(); }
+        setPlaying(false);
+        setIndex(Math.max(0, nextQueue.length - 1));
+      }
     } else if (idx < index) {
       setIndex((i) => i - 1);
     }
@@ -207,6 +223,7 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   }, [muted, volume]);
 
   const stop = useCallback(() => {
+    intendPlayingRef.current = false;
     const audio = audioRef.current;
     if (audio) { audio.pause(); audio.removeAttribute("src"); audio.load(); }
     setQueue([]);
@@ -273,9 +290,17 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
         // the controller is pointed at another location's (cross-origin) backend. The
         // stream proxy answers with Access-Control-Allow-Origin: * to match.
         crossOrigin="anonymous"
+        preload="auto"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onPlaying={() => setPlaying(true)}
+        // The next track's stream is loaded but the autostart play() was rejected
+        // (mobile autoplay policy / backgrounded). Now that it's ready, retry — this
+        // is what unsticks track-to-track transitions without a manual skip.
+        onCanPlay={(e) => { if (intendPlayingRef.current && e.currentTarget.paused) void e.currentTarget.play().catch(() => undefined); }}
+        // A stream that failed to load would otherwise dead-end the queue. Skip past
+        // it to the next track instead of silently stalling.
+        onError={() => { if (intendPlayingRef.current) next(); }}
         onTimeUpdate={(e) => setPosition(e.currentTarget.currentTime)}
         onDurationChange={(e) => setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
         onEnded={() => next()}
