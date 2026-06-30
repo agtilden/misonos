@@ -141,7 +141,15 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     if (idx === index) {
       // Removed the current track: play whatever shifts into its slot, else stop.
       if (idx < nextQueue.length) loadAndPlay(idx, nextQueue);
-      else { audioRef.current?.pause(); setPlaying(false); setIndex(Math.max(0, nextQueue.length - 1)); }
+      else {
+        // Nothing shifts into the slot: stop for real. Clear intent and detach the
+        // src so a late canplay can't retry play() on the removed track.
+        intendPlayingRef.current = false;
+        const audio = audioRef.current;
+        if (audio) { audio.pause(); audio.removeAttribute("src"); audio.load(); }
+        setPlaying(false);
+        setIndex(Math.max(0, nextQueue.length - 1));
+      }
     } else if (idx < index) {
       setIndex((i) => i - 1);
     }
