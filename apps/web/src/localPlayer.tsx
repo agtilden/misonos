@@ -132,6 +132,22 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Unlock on the FIRST user interaction anywhere in the app, not just the play tap.
+  // The local playback path awaits container expansion (buildLocalTracks) before
+  // calling enqueue, which loses the gesture — so blessing must not depend on that
+  // call being gesture-synchronous. Any earlier tap/key (picking a source, opening a
+  // menu, or the play tap itself) unlocks both elements while a gesture is live.
+  useEffect(() => {
+    const events = ["pointerdown", "touchend", "keydown"] as const;
+    const opts: AddEventListenerOptions = { capture: true };
+    const unlock = () => {
+      ensureBlessed();
+      for (const ev of events) document.removeEventListener(ev, unlock, opts);
+    };
+    for (const ev of events) document.addEventListener(ev, unlock, opts);
+    return () => { for (const ev of events) document.removeEventListener(ev, unlock, opts); };
+  }, [ensureBlessed]);
+
   // Imperatively swap the active element to `idx`. The idle element usually already
   // holds this track (preloaded), so we just play() it — buffered + unlocked, so it
   // starts even in the background. Falls back to cueing on demand for explicit jumps.
@@ -397,13 +413,13 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
           onPlaying={(e) => { if (isActive(e.currentTarget) && !isSilent(e.currentTarget)) setPlaying(true); }}
           // The active element's stream is ready but its autostart play() was rejected
           // (mobile autoplay policy / backgrounded). Retry — this unsticks transitions.
-          onCanPlay={(e) => { if (intendPlayingRef.current && isActive(e.currentTarget) && e.currentTarget.paused) void e.currentTarget.play().catch(() => undefined); }}
+          onCanPlay={(e) => { if (intendPlayingRef.current && isActive(e.currentTarget) && !isSilent(e.currentTarget) && e.currentTarget.paused) void e.currentTarget.play().catch(() => undefined); }}
           // A stream that failed to load on the active element would dead-end the
           // queue; skip past it. Errors on the idle/silent element are ignored.
           onError={(e) => { if (intendPlayingRef.current && isActive(e.currentTarget) && !isSilent(e.currentTarget)) next(); }}
           onTimeUpdate={(e) => { if (isActive(e.currentTarget)) setPosition(e.currentTarget.currentTime); }}
           onDurationChange={(e) => { if (isActive(e.currentTarget)) setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0); }}
-          onEnded={(e) => { if (isActive(e.currentTarget)) next(); }}
+          onEnded={(e) => { if (isActive(e.currentTarget) && !isSilent(e.currentTarget)) next(); }}
         />
       ))}
     </LocalPlayerContext.Provider>
