@@ -128,7 +128,10 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
       if (!el) continue;
       el.muted = true;
       el.src = silentWavUrl();
-      void el.play().then(() => el.pause()).catch(() => undefined);
+      // Only pause if the element is still the silent clip — a synchronous "Play all"
+      // on the same tap can reuse this element for the real stream before this
+      // promise resolves, and pausing then would stop real playback.
+      void el.play().then(() => { if (el.src === silentUrlCache) el.pause(); }).catch(() => undefined);
     }
   }, []);
 
