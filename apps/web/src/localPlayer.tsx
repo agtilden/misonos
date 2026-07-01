@@ -55,18 +55,55 @@ function streamUrl(track: LocalTrack): string {
   return apiUrl(`/api/stream/${encodeURIComponent(track.sourceId)}/${encodeURIComponent(track.trackId)}`);
 }
 
+// A few samples of digital silence as a WAV blob URL. Playing this on an <audio>
+// element inside a user gesture "unlocks" the element for later programmatic
+// play() — even while the page is backgrounded — without making a sound.
+let silentUrlCache: string | null = null;
+function silentWavUrl(): string {
+  if (silentUrlCache) return silentUrlCache;
+  const sampleRate = 8000;
+  const samples = 400; // ~0.05s
+  const dataSize = samples * 2;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buf);
+  const writeStr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); writeStr(8, "WAVE");
+  writeStr(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  writeStr(36, "data"); view.setUint32(40, dataSize, true);
+  // Sample bytes left as zero => silence.
+  silentUrlCache = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  return silentUrlCache;
+}
+
+function sameTrack(a: LocalTrack | null | undefined, b: LocalTrack | null | undefined): boolean {
+  return !!a && !!b && a.trackId === b.trackId && a.sourceId === b.sourceId;
+}
+
 // Independent in-browser audio engine. Surfaced as a Play-to target ("This device")
 // that the main UI binds to like a Sonos group — but NOT synchronized with Sonos.
+//
+// Two <audio> elements ping-pong: while one plays track N, the other preloads
+// track N+1. On track end we just play() the already-buffered, already-unlocked
+// idle element instead of swapping src on one element and re-calling play() — the
+// latter is what the mobile autoplay policy blocks between tracks when the screen
+// is locked, leaving playback stuck.
 export function LocalPlayerProvider({ children }: { children: ReactNode }) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioARef = useRef<HTMLAudioElement | null>(null);
+  const audioBRef = useRef<HTMLAudioElement | null>(null);
+  // Which element (0=A, 1=B) is the one currently playing; the other preloads next.
+  const activeSideRef = useRef<0 | 1>(0);
+  // What each side is cued to, so we know whether the idle element already holds
+  // the track we're about to play (preloaded) or needs to be re-cued.
+  const sideTrackRef = useRef<[LocalTrack | null, LocalTrack | null]>([null, null]);
+  // Both elements unlocked for background autostart (done once, in a user gesture).
+  const blessedRef = useRef(false);
   // Web Audio graph, attached lazily the first time the VU meter taps this device.
-  // Once attached, the element's output flows through `gain` (so volume/mute keep
-  // working) and `splitter` feeds the per-channel analysers.
+  // Both elements feed `gain` (so volume/mute keep working) and `splitter` feeds the
+  // per-channel analysers; only the active element makes sound at any moment.
   const audioGraphRef = useRef<{ ctx: AudioContext; gain: GainNode; left: AnalyserNode; right: AnalyserNode } | null>(null);
-  // Whether we *want* audio playing. On mobile, a programmatic play() after a src
-  // swap between tracks is often rejected/deferred (autoplay policy, background
-  // throttling) — the element ends up loaded but paused ("stuck between tracks").
-  // We retry play() from onCanPlay whenever intent is set but the element is paused.
+  // Whether we *want* audio playing. play() can still be rejected/deferred on mobile;
+  // onCanPlay retries from the active element whenever intent is set but it's paused.
   const intendPlayingRef = useRef(false);
   const [queue, setQueue] = useState<LocalTrack[]>([]);
   const [index, setIndex] = useState(0);
@@ -78,26 +115,95 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
 
   const current: LocalTrack | undefined = queue[index];
 
-  // Imperatively load + play so the first play stays within the click's user gesture.
-  const loadAndPlay = useCallback((idx: number, tracks: LocalTrack[]) => {
-    const audio = audioRef.current;
+  const elFor = (side: 0 | 1) => (side === 0 ? audioARef.current : audioBRef.current);
+  const activeAudio = useCallback(() => elFor(activeSideRef.current), []);
+
+  // Unlock BOTH elements for later background autostart by exercising play() on a
+  // silent clip. MUST be called synchronously inside a user gesture (iOS only counts
+  // the play() that happens in the gesture's own call stack, not from a later effect).
+  const ensureBlessed = useCallback(() => {
+    if (blessedRef.current) return;
+    blessedRef.current = true;
+    for (const el of [audioARef.current, audioBRef.current]) {
+      if (!el) continue;
+      el.muted = true;
+      el.src = silentWavUrl();
+      // Only pause if the element is still the silent clip — a synchronous "Play all"
+      // on the same tap can reuse this element for the real stream before this
+      // promise resolves, and pausing then would stop real playback.
+      void el.play().then(() => { if (el.src === silentUrlCache) el.pause(); }).catch(() => undefined);
+    }
+  }, []);
+
+  // Unlock on the FIRST user interaction anywhere in the app, not just the play tap.
+  // The local playback path awaits container expansion (buildLocalTracks) before
+  // calling enqueue, which loses the gesture — so blessing must not depend on that
+  // call being gesture-synchronous. Any earlier tap/key (picking a source, opening a
+  // menu, or the play tap itself) unlocks both elements while a gesture is live.
+  useEffect(() => {
+    const events = ["pointerdown", "touchend", "keydown"] as const;
+    const opts: AddEventListenerOptions = { capture: true };
+    const unlock = () => {
+      ensureBlessed();
+      for (const ev of events) document.removeEventListener(ev, unlock, opts);
+    };
+    for (const ev of events) document.addEventListener(ev, unlock, opts);
+    return () => { for (const ev of events) document.removeEventListener(ev, unlock, opts); };
+  }, [ensureBlessed]);
+
+  // Imperatively swap the active element to `idx`. The idle element usually already
+  // holds this track (preloaded), so we just play() it — buffered + unlocked, so it
+  // starts even in the background. Falls back to cueing on demand for explicit jumps.
+  const playTrack = useCallback((idx: number, tracks: LocalTrack[]) => {
     const track = tracks[idx];
-    if (!audio || !track) return;
+    const toSide: 0 | 1 = activeSideRef.current === 0 ? 1 : 0;
+    const toEl = elFor(toSide);
+    const fromEl = activeAudio();
+    if (!track || !toEl) return;
+    intendPlayingRef.current = true;
+    if (!sameTrack(sideTrackRef.current[toSide], track) || toEl.error) {
+      toEl.src = streamUrl(track);
+      sideTrackRef.current[toSide] = track;
+    }
+    toEl.muted = muted;
+    toEl.volume = volume / 100;
+    void toEl.play().catch(() => undefined);
+    activeSideRef.current = toSide;
+    fromEl?.pause();
     setIndex(idx);
     setPosition(0);
     setDuration(0);
-    intendPlayingRef.current = true;
-    audio.src = streamUrl(track);
-    // play() may reject here on mobile (not ready yet / backgrounded); onCanPlay
-    // retries once the stream is ready and intent is still set.
-    void audio.play().catch(() => undefined);
-  }, []);
+  }, [muted, volume, activeAudio]);
+
+  // Keep the idle element cued to whatever plays next, refreshed on any queue/index
+  // change (advance, remove, reorder, enqueue) so the next-track handoff is instant.
+  useEffect(() => {
+    const idle = elFor(activeSideRef.current === 0 ? 1 : 0);
+    const idleSide: 0 | 1 = activeSideRef.current === 0 ? 1 : 0;
+    if (!idle) return;
+    const upcoming = queue[index + 1];
+    if (!upcoming) {
+      if (sideTrackRef.current[idleSide]) {
+        idle.removeAttribute("src");
+        idle.load();
+        sideTrackRef.current[idleSide] = null;
+      }
+      return;
+    }
+    if (!sameTrack(sideTrackRef.current[idleSide], upcoming)) {
+      idle.muted = true; // stays silent until it becomes the active element
+      idle.src = streamUrl(upcoming);
+      idle.load();
+      sideTrackRef.current[idleSide] = upcoming;
+    }
+  }, [index, queue]);
 
   const enqueue = useCallback((tracks: LocalTrack[], mode: "replace" | "next" | "end") => {
     if (tracks.length === 0) return;
     if (mode === "replace" || queue.length === 0) {
+      ensureBlessed();
       setQueue(tracks);
-      loadAndPlay(0, tracks);
+      playTrack(0, tracks);
       return;
     }
     if (mode === "next") {
@@ -105,34 +211,43 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     } else {
       setQueue((prev) => [...prev, ...tracks]);
     }
-  }, [queue.length, index, loadAndPlay]);
+  }, [queue.length, index, ensureBlessed, playTrack]);
 
   const next = useCallback(() => {
-    if (index + 1 < queue.length) loadAndPlay(index + 1, queue);
-    else { intendPlayingRef.current = false; audioRef.current?.pause(); setPlaying(false); }
-  }, [index, queue, loadAndPlay]);
+    if (index + 1 < queue.length) playTrack(index + 1, queue);
+    else { intendPlayingRef.current = false; activeAudio()?.pause(); setPlaying(false); }
+  }, [index, queue, playTrack, activeAudio]);
 
   const prev = useCallback(() => {
-    const audio = audioRef.current;
+    const audio = activeAudio();
     if (audio && audio.currentTime > 3) { audio.currentTime = 0; return; }
-    if (index > 0) loadAndPlay(index - 1, queue);
+    if (index > 0) playTrack(index - 1, queue);
     else if (audio) audio.currentTime = 0;
-  }, [index, queue, loadAndPlay]);
+  }, [index, queue, playTrack, activeAudio]);
 
-  const playIndex = useCallback((idx: number) => loadAndPlay(idx, queue), [queue, loadAndPlay]);
+  const playIndex = useCallback((idx: number) => { ensureBlessed(); playTrack(idx, queue); }, [queue, ensureBlessed, playTrack]);
 
   const toggle = useCallback(() => {
-    const audio = audioRef.current;
+    const audio = activeAudio();
     if (!audio || !current) return;
-    if (audio.paused) { intendPlayingRef.current = true; void audio.play().catch(() => undefined); }
+    if (audio.paused) { ensureBlessed(); intendPlayingRef.current = true; void audio.play().catch(() => undefined); }
     else { intendPlayingRef.current = false; audio.pause(); }
-  }, [current]);
+  }, [current, ensureBlessed, activeAudio]);
 
-  const pause = useCallback(() => { intendPlayingRef.current = false; audioRef.current?.pause(); }, []);
+  const pause = useCallback(() => { intendPlayingRef.current = false; activeAudio()?.pause(); }, [activeAudio]);
 
   const seek = useCallback((seconds: number) => {
-    const audio = audioRef.current;
+    const audio = activeAudio();
     if (audio && Number.isFinite(seconds)) audio.currentTime = seconds;
+  }, [activeAudio]);
+
+  // Detach both elements and forget what's cued — a hard stop, distinct from a pause.
+  const haltPlayback = useCallback(() => {
+    intendPlayingRef.current = false;
+    for (const el of [audioARef.current, audioBRef.current]) {
+      if (el) { el.pause(); el.removeAttribute("src"); el.load(); }
+    }
+    sideTrackRef.current = [null, null];
   }, []);
 
   const removeIndex = useCallback((idx: number) => {
@@ -140,20 +255,12 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     setQueue(nextQueue);
     if (idx === index) {
       // Removed the current track: play whatever shifts into its slot, else stop.
-      if (idx < nextQueue.length) loadAndPlay(idx, nextQueue);
-      else {
-        // Nothing shifts into the slot: stop for real. Clear intent and detach the
-        // src so a late canplay can't retry play() on the removed track.
-        intendPlayingRef.current = false;
-        const audio = audioRef.current;
-        if (audio) { audio.pause(); audio.removeAttribute("src"); audio.load(); }
-        setPlaying(false);
-        setIndex(Math.max(0, nextQueue.length - 1));
-      }
+      if (idx < nextQueue.length) playTrack(idx, nextQueue);
+      else { haltPlayback(); setPlaying(false); setIndex(Math.max(0, nextQueue.length - 1)); }
     } else if (idx < index) {
       setIndex((i) => i - 1);
     }
-  }, [queue, index, loadAndPlay]);
+  }, [queue, index, playTrack, haltPlayback]);
 
   const reorderIndex = useCallback((from: number, to: number) => {
     setQueue((prev) => {
@@ -176,36 +283,37 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
     const clamped = Math.max(0, Math.min(100, value));
     setVolumeState(clamped);
     setMuted(false);
-    const audio = audioRef.current;
+    // Apply to whichever element is currently audible; the idle element stays muted
+    // until it takes over (playTrack sets its volume then).
+    const audio = activeAudio();
     if (audio) { audio.volume = clamped / 100; audio.muted = false; }
     // Once the Web Audio tap is attached the element's own volume is bypassed —
     // drive output through the gain node instead.
     if (audioGraphRef.current) audioGraphRef.current.gain.gain.value = clamped / 100;
-  }, []);
+  }, [activeAudio]);
 
   const toggleMute = useCallback(() => {
     setMuted((prev) => {
       const nextMuted = !prev;
-      if (audioRef.current) audioRef.current.muted = nextMuted;
+      const audio = activeAudio();
+      if (audio) audio.muted = nextMuted;
       if (audioGraphRef.current) audioGraphRef.current.gain.gain.value = nextMuted ? 0 : volume / 100;
       return nextMuted;
     });
-  }, [volume]);
+  }, [volume, activeAudio]);
 
   const getAnalysers = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return null;
+    const a = audioARef.current;
+    const b = audioBRef.current;
+    if (!a || !b) return null;
     if (audioGraphRef.current) return { left: audioGraphRef.current.left, right: audioGraphRef.current.right };
     try {
       const Ctx: typeof AudioContext = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new Ctx();
-      const source = ctx.createMediaElementSource(audio);
       const gain = ctx.createGain();
       gain.gain.value = muted ? 0 : volume / 100;
-      source.connect(gain);
       gain.connect(ctx.destination);
       const splitter = ctx.createChannelSplitter(2);
-      source.connect(splitter);
       const left = ctx.createAnalyser();
       left.fftSize = 2048;
       left.smoothingTimeConstant = 0;
@@ -214,6 +322,13 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
       right.smoothingTimeConstant = 0;
       splitter.connect(left, 0);
       splitter.connect(right, 1);
+      // Route BOTH ping-pong elements through the same graph; only the active one
+      // produces sound, so the analysers always read whatever's currently playing.
+      for (const el of [a, b]) {
+        const source = ctx.createMediaElementSource(el);
+        source.connect(gain);
+        source.connect(splitter);
+      }
       void ctx.resume();
       audioGraphRef.current = { ctx, gain, left, right };
       return { left, right };
@@ -223,15 +338,13 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   }, [muted, volume]);
 
   const stop = useCallback(() => {
-    intendPlayingRef.current = false;
-    const audio = audioRef.current;
-    if (audio) { audio.pause(); audio.removeAttribute("src"); audio.load(); }
+    haltPlayback();
     setQueue([]);
     setIndex(0);
     setPlaying(false);
     setPosition(0);
     setDuration(0);
-  }, []);
+  }, [haltPlayback]);
 
   // Derived, UI-facing shapes.
   const nowPlaying = useMemo<LocalNowPlaying | null>(() => current ? {
@@ -280,31 +393,38 @@ export function LocalPlayerProvider({ children }: { children: ReactNode }) {
   }), [queue.length, playing, nowPlaying, queueItems, index, position, duration, volume, muted,
       enqueue, toggle, pause, next, prev, seek, playIndex, removeIndex, reorderIndex, setVolume, toggleMute, stop, getAnalysers]);
 
+  // Shared <audio> event handlers. Events fire on both elements (incl. the silent
+  // blessing clip and the preloading idle element); we only act on the active one.
+  const isActive = (el: HTMLAudioElement) => el === activeAudio();
+  const isSilent = (el: HTMLAudioElement) => el.src === silentUrlCache;
+
   return (
     <LocalPlayerContext.Provider value={api}>
       {children}
-      <audio
-        ref={audioRef}
-        // CORS-enable the element so the VU meter's Web Audio graph
-        // (createMediaElementSource) can read the stream — and doesn't mute it — when
-        // the controller is pointed at another location's (cross-origin) backend. The
-        // stream proxy answers with Access-Control-Allow-Origin: * to match.
-        crossOrigin="anonymous"
-        preload="auto"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onPlaying={() => setPlaying(true)}
-        // The next track's stream is loaded but the autostart play() was rejected
-        // (mobile autoplay policy / backgrounded). Now that it's ready, retry — this
-        // is what unsticks track-to-track transitions without a manual skip.
-        onCanPlay={(e) => { if (intendPlayingRef.current && e.currentTarget.paused) void e.currentTarget.play().catch(() => undefined); }}
-        // A stream that failed to load would otherwise dead-end the queue. Skip past
-        // it to the next track instead of silently stalling.
-        onError={() => { if (intendPlayingRef.current) next(); }}
-        onTimeUpdate={(e) => setPosition(e.currentTarget.currentTime)}
-        onDurationChange={(e) => setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
-        onEnded={() => next()}
-      />
+      {([audioARef, audioBRef] as const).map((ref, i) => (
+        <audio
+          key={i}
+          ref={ref}
+          // CORS-enable the element so the VU meter's Web Audio graph
+          // (createMediaElementSource) can read the stream — and doesn't mute it — when
+          // the controller is pointed at another location's (cross-origin) backend. The
+          // stream proxy answers with Access-Control-Allow-Origin: * to match.
+          crossOrigin="anonymous"
+          preload="auto"
+          onPlay={(e) => { if (isActive(e.currentTarget) && !isSilent(e.currentTarget)) setPlaying(true); }}
+          onPause={(e) => { if (isActive(e.currentTarget) && !isSilent(e.currentTarget)) setPlaying(false); }}
+          onPlaying={(e) => { if (isActive(e.currentTarget) && !isSilent(e.currentTarget)) setPlaying(true); }}
+          // The active element's stream is ready but its autostart play() was rejected
+          // (mobile autoplay policy / backgrounded). Retry — this unsticks transitions.
+          onCanPlay={(e) => { if (intendPlayingRef.current && isActive(e.currentTarget) && !isSilent(e.currentTarget) && e.currentTarget.paused) void e.currentTarget.play().catch(() => undefined); }}
+          // A stream that failed to load on the active element would dead-end the
+          // queue; skip past it. Errors on the idle/silent element are ignored.
+          onError={(e) => { if (intendPlayingRef.current && isActive(e.currentTarget) && !isSilent(e.currentTarget)) next(); }}
+          onTimeUpdate={(e) => { if (isActive(e.currentTarget)) setPosition(e.currentTarget.currentTime); }}
+          onDurationChange={(e) => { if (isActive(e.currentTarget)) setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0); }}
+          onEnded={(e) => { if (isActive(e.currentTarget) && !isSilent(e.currentTarget)) next(); }}
+        />
+      ))}
     </LocalPlayerContext.Provider>
   );
 }
