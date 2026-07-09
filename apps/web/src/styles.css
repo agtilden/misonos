@@ -2110,6 +2110,10 @@ small {
   cursor: pointer;
   display: block;
   width: 100%;
+  /* Without this, touch drags along the bar are claimed by the browser as a
+     page scroll — the pointer gets cancelled, so tap-to-seek works but scrubbing
+     never fires pointermove. */
+  touch-action: none;
 }
 
 .playback-progress:disabled {
