@@ -40,7 +40,7 @@ describe("App", () => {
     expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
     expect(await screen.findByText(/^(Mint|Amber|Sky|Coral|Lilac|Lime|Pink|Olive)$/)).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Song" })).toBeInTheDocument();
-    expect(await screen.findByRole("meter", { name: "Playback progress (click to seek)" })).toBeInTheDocument();
+    expect(await screen.findByRole("slider", { name: "Playback progress (drag to seek)" })).toBeInTheDocument();
   });
 });
 
