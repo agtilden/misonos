@@ -855,28 +855,14 @@ export function App() {
             {/* Live streams (e.g. TuneIn radio) report no duration and can't be
                 seeked, so the scrub bar would be meaningless — hide it entirely. */}
             {effectiveProgress.durationSeconds > 0 && (
-              <div className="progress-copy">
-                <span>{effectiveProgress.positionLabel}</span>
-                <button
-                  type="button"
-                  className="playback-progress"
-                  role="meter"
-                  aria-label="Playback progress (click to seek)"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(effectiveProgress.percent)}
-                  disabled={!transportEnabled || !effectiveProgress.durationSeconds}
-                  onClick={(event) => {
-                    if (!effectiveProgress.durationSeconds) return;
-                    const target = event.currentTarget.getBoundingClientRect();
-                    const ratio = Math.max(0, Math.min(1, (event.clientX - target.left) / target.width));
-                    onSeekTo(Math.round(ratio * effectiveProgress.durationSeconds));
-                  }}
-                >
-                  <span style={{ width: `${effectiveProgress.percent}%` }} />
-                </button>
-                <span>{effectiveProgress.durationLabel}</span>
-              </div>
+              <PlaybackScrubber
+                percent={effectiveProgress.percent}
+                durationSeconds={effectiveProgress.durationSeconds}
+                positionLabel={effectiveProgress.positionLabel}
+                durationLabel={effectiveProgress.durationLabel}
+                disabled={!transportEnabled}
+                onSeek={onSeekTo}
+              />
             )}
           </div>
           <div className="transport-bar">
@@ -3028,6 +3014,82 @@ function SleepTimer({ remainingSeconds, disabled, onSet }: SleepTimerProps) {
   );
 }
 
+interface PlaybackScrubberProps {
+  percent: number;
+  durationSeconds: number;
+  positionLabel: string;
+  durationLabel: string;
+  disabled: boolean;
+  onSeek: (seconds: number) => void;
+}
+
+// The bar fill is driven by the confirmed `percent` from the device, but a live
+// seek round-trips through Sonos before that catches up. To keep scrubbing
+// snappy we track the drag locally and only fire `onSeek` on release; the target
+// time floats above the thumb in an enlarged bubble while the finger is down.
+function PlaybackScrubber({ percent, durationSeconds, positionLabel, durationLabel, disabled, onSeek }: PlaybackScrubberProps) {
+  const barRef = useRef<HTMLButtonElement>(null);
+  const [scrubRatio, setScrubRatio] = useState<number | null>(null);
+  const scrubbing = scrubRatio !== null;
+  const displayPercent = scrubbing ? scrubRatio * 100 : percent;
+  const scrubSeconds = scrubbing ? Math.round(scrubRatio * durationSeconds) : 0;
+
+  const ratioFromClientX = (clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return 0;
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  };
+
+  const commit = (ratio: number) => {
+    setScrubRatio(null);
+    if (!disabled && durationSeconds) onSeek(Math.round(ratio * durationSeconds));
+  };
+
+  return (
+    <div className="progress-copy">
+      <span>{scrubbing ? formatDuration(scrubSeconds) : positionLabel}</span>
+      <button
+        ref={barRef}
+        type="button"
+        className="playback-progress"
+        role="slider"
+        aria-label="Playback progress (drag to seek)"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(displayPercent)}
+        disabled={disabled || !durationSeconds}
+        onPointerDown={(event) => {
+          if (disabled || !durationSeconds) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setScrubRatio(ratioFromClientX(event.clientX));
+        }}
+        onPointerMove={(event) => {
+          if (scrubRatio === null) return;
+          setScrubRatio(ratioFromClientX(event.clientX));
+        }}
+        onPointerUp={(event) => {
+          if (scrubRatio === null) return;
+          commit(ratioFromClientX(event.clientX));
+        }}
+        onPointerCancel={() => setScrubRatio(null)}
+        onKeyDown={(event) => {
+          if (disabled || !durationSeconds) return;
+          const step = event.shiftKey ? 30 : 5;
+          const current = Math.round((scrubRatio ?? percent / 100) * durationSeconds);
+          if (event.key === "ArrowLeft") { event.preventDefault(); commit(Math.max(0, current - step) / durationSeconds); }
+          else if (event.key === "ArrowRight") { event.preventDefault(); commit(Math.min(durationSeconds, current + step) / durationSeconds); }
+        }}
+      >
+        <span className="fill" style={{ width: `${displayPercent}%` }} />
+        {scrubbing && (
+          <span className="scrub-bubble" style={{ left: `${displayPercent}%` }}>{formatDuration(scrubSeconds)}</span>
+        )}
+      </button>
+      <span>{durationLabel}</span>
+    </div>
+  );
+}
+
 interface VolumeControlProps {
   label: string;
   value: number;
@@ -3042,31 +3104,59 @@ interface VolumeControlProps {
 
 function VolumeControl({ label, value, muted, maxVolume = 100, disabled = false, onChange, onMute, onSliderPointerDown, swallowFirstAdjustment = false }: VolumeControlProps) {
   const ignoreUntilRelease = useRef(false);
+  const dragging = useRef(false);
+  // While the finger is down we keep the value local and defer the (laggy) Sonos
+  // send until release, so dragging tracks the thumb instantly instead of fighting
+  // a stream of device confirmations. `dragValue` is non-null only mid-drag.
+  const [dragValue, setDragValue] = useState<number | null>(null);
+  const displayValue = dragValue ?? Math.min(value, maxVolume);
+
+  const endDrag = () => {
+    dragging.current = false;
+    const pending = dragValue;
+    setDragValue(null);
+    if (ignoreUntilRelease.current) { ignoreUntilRelease.current = false; return; }
+    if (pending !== null && pending !== Math.min(value, maxVolume)) onChange(pending);
+  };
+
   return (
     <div className="volume-control">
       <button className={muted ? "icon-button muted" : "icon-button"} type="button" title={muted ? "Unmute" : "Mute"} aria-label={`${muted ? "Unmute" : "Mute"} ${label}`} disabled={disabled} onClick={() => void onMute()}>
         {muted ? <VolumeX size={17} /> : <Volume2 size={17} />}
       </button>
-      <input
-        aria-label={`${label} volume`}
-        type="range"
-        min="0"
-        max={maxVolume}
-        value={Math.min(value, maxVolume)}
-        disabled={disabled}
-        onPointerDown={() => {
-          if (swallowFirstAdjustment) ignoreUntilRelease.current = true;
-          onSliderPointerDown?.();
-        }}
-        onPointerUp={() => { ignoreUntilRelease.current = false; }}
-        onPointerCancel={() => { ignoreUntilRelease.current = false; }}
-        onFocus={onSliderPointerDown}
-        onChange={(event) => {
-          if (ignoreUntilRelease.current) return;
-          onChange(Number.parseInt(event.currentTarget.value, 10));
-        }}
-      />
-      <output>{value}</output>
+      <div className="scrub-wrap">
+        <input
+          aria-label={`${label} volume`}
+          type="range"
+          min="0"
+          max={maxVolume}
+          value={displayValue}
+          disabled={disabled}
+          onPointerDown={() => {
+            if (swallowFirstAdjustment) ignoreUntilRelease.current = true;
+            dragging.current = true;
+            setDragValue(Math.min(value, maxVolume));
+            onSliderPointerDown?.();
+          }}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onFocus={onSliderPointerDown}
+          onChange={(event) => {
+            if (ignoreUntilRelease.current) return;
+            const next = Number.parseInt(event.currentTarget.value, 10);
+            // Pointer drags stay local until release; keyboard/click changes have
+            // no intermediate spray, so commit them straight through.
+            if (dragging.current) setDragValue(next);
+            else onChange(next);
+          }}
+        />
+        {dragValue !== null && (
+          <span className="scrub-bubble" style={{ left: `${maxVolume > 0 ? (displayValue / maxVolume) * 100 : 0}%` }}>{displayValue}</span>
+        )}
+      </div>
+      {/* Keep showing the committed volume here while dragging — the target lives
+          in the bubble, so the two together read as "from X → Y". */}
+      <output>{Math.min(value, maxVolume)}</output>
     </div>
   );
 }
