@@ -45,6 +45,14 @@ export function selfClosingTags(xml: string, tagName: string): string[] {
   return [...xml.matchAll(new RegExp(`<${escaped}\\s[^>]*/>`, "gi"))].map((match) => match[0]);
 }
 
+// Opening tags, self-closing or not. Sonos emits the same element both ways: a
+// ZoneGroupMember is self-closing until it's a bonded coordinator, at which point
+// it becomes a container holding <Satellite/> children.
+export function openingTags(xml: string, tagName: string): string[] {
+  const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...xml.matchAll(new RegExp(`<${escaped}\\s[^>]*?/?>`, "gi"))].map((match) => match[0]);
+}
+
 export function attrText(tag: string, attrName: string): string | undefined {
   const escaped = attrName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = tag.match(new RegExp(`${escaped}\\s*=\\s*(['"])(.*?)\\1`, "i"));

@@ -1136,6 +1136,13 @@ export class SonosService {
     try {
       const response = await callSoap(seed.ipAddress, "ZoneGroupTopology", "GetZoneGroupState");
       const topology = parseZoneGroupState(response.ZoneGroupState);
+      if (topology.zones.length === 0 && (response.ZoneGroupState ?? "").trim().length > 0) {
+        // A non-empty topology that parses to nothing means we can't read this layout,
+        // not that the household is empty. Keep whatever discovery already found rather
+        // than wiping it — an empty zone list is indistinguishable from a network failure.
+        console.warn("[bridge] ZoneGroupState parsed to zero zones; keeping discovered topology");
+        return;
+      }
       this.zones = new Map(topology.zones.map((zone) => [zone.uuid, zone]));
       this.groups = new Map(topology.groups.map((group) => [group.id, group]));
     } catch {
