@@ -1,5 +1,5 @@
 import type { SonosGroup, SonosZone } from "@misonos/sonos-protocol";
-import { allTagBlocks, attrText, selfClosingTags, tagText } from "@misonos/sonos-protocol";
+import { allTagBlocks, attrText, openingTags, selfClosingTags, tagText } from "@misonos/sonos-protocol";
 
 function parseGen(value: string | undefined): number | undefined {
   if (!value) return undefined;
@@ -29,7 +29,16 @@ export function parseZoneGroupState(xml: string): { zones: SonosZone[]; groups: 
     const groupId = attrText(groupBlock, "ID") ?? coordinatorId;
     const groupZones: SonosZone[] = [];
 
-    for (const memberTag of selfClosingTags(groupBlock, "ZoneGroupMember")) {
+    // A bonded coordinator (home theater, stereo pair) is a container wrapping its
+    // <Satellite/> children, so members can't be assumed self-closing. Satellites carry
+    // the same UUID/Location/ZoneName attributes and declare Invisible="1", so they fall
+    // out of the same extraction as hidden zones.
+    const memberTags = [
+      ...openingTags(groupBlock, "ZoneGroupMember"),
+      ...selfClosingTags(groupBlock, "Satellite")
+    ];
+
+    for (const memberTag of memberTags) {
       const uuid = attrText(memberTag, "UUID") ?? attrText(memberTag, "Uuid") ?? "";
       if (!uuid) continue;
       const location = attrText(memberTag, "Location") ?? "";

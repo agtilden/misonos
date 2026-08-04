@@ -1136,16 +1136,18 @@ export class SonosService {
     try {
       const response = await callSoap(seed.ipAddress, "ZoneGroupTopology", "GetZoneGroupState");
       const topology = parseZoneGroupState(response.ZoneGroupState);
+      if (topology.zones.length === 0 && (response.ZoneGroupState ?? "").trim().length > 0) {
+        // A non-empty topology that parses to nothing means we can't read this layout,
+        // not that the household is empty. Keep whatever discovery already found rather
+        // than wiping it — an empty zone list is indistinguishable from a network failure.
+        console.warn("[bridge] ZoneGroupState parsed to zero zones; falling back to solo groups");
+        this.groups = soloGroupsFor(this.zones);
+        return;
+      }
       this.zones = new Map(topology.zones.map((zone) => [zone.uuid, zone]));
       this.groups = new Map(topology.groups.map((group) => [group.id, group]));
     } catch {
-      const fallbackGroups = [...this.zones.values()].map((zone) => ({
-        id: zone.uuid,
-        coordinatorId: zone.uuid,
-        coordinatorName: zone.name,
-        zones: [zone]
-      }));
-      this.groups = new Map(fallbackGroups.map((group) => [group.id, group]));
+      this.groups = soloGroupsFor(this.zones);
     }
   }
 
@@ -1171,6 +1173,17 @@ export class SonosService {
     if (!zone) throw new Error(`Unknown Sonos zone: ${zoneId}`);
     return zone;
   }
+}
+
+// When the real topology is unreadable, every discovered zone becomes its own group so
+// group-keyed operations still work. Derived from the zones we hold, so the two never drift.
+function soloGroupsFor(zones: Map<string, SonosZone>): Map<string, SonosGroup> {
+  return new Map(
+    [...zones.values()].map((zone) => [
+      zone.uuid,
+      { id: zone.uuid, coordinatorId: zone.uuid, coordinatorName: zone.name, zones: [zone] }
+    ])
+  );
 }
 
 // Never surface a raw playback URI as a track title (happens when source metadata
