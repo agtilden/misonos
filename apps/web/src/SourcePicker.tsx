@@ -19,7 +19,7 @@ interface SourcePickerProps {
 // `/source-icons/<id>.svg` (NOT the trademarked band logos). A user-uploaded logo
 // (served by the bridge at `/api/source-icons/<id>`) takes precedence. Unknown
 // sources with no built-in emblem fall back to a generic glyph tile.
-const KNOWN_ICONS = new Set(["youtube-music", "grateful-dead-archive", "phish-in", "live-music-archive", "podcasts", "tunein"]);
+const KNOWN_ICONS = new Set(["youtube-music", "grateful-dead-archive", "phish-in", "live-music-archive", "podcasts", "tunein", "navidrome"]);
 
 type IconStage = "custom" | "builtin" | "glyph";
 

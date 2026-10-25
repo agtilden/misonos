@@ -22,6 +22,7 @@ services:
       MISONOS_YTM_URL: "http://127.0.0.1:4321"
       MISONOS_PODCAST_URL: "http://127.0.0.1:4323"
       MISONOS_TUNEIN_URL: "http://127.0.0.1:4324"
+      MISONOS_NAVIDROME_URL: "http://127.0.0.1:4325"
       # Writable SQLite store (preferences, recently-viewed, EQ presets). WAL
       # sidecars (misonos.db-wal/-shm) live alongside it in ./data.
       MISONOS_BRIDGE_DB: "/data/misonos.db"
@@ -93,6 +94,23 @@ services:
       MISONOS_TUNEIN_DB: "/data/tunein.db"
     volumes:
       - ./data:/data
+
+  navidrome:
+    image: misonos-node
+    command: node apps/navidrome-smapi/dist/index.js
+    network_mode: host
+    restart: unless-stopped
+    depends_on: [bridge]
+    environment:
+      MISONOS_NAVIDROME_PORT: "4325"
+      # Optional: your Navidrome (or other Subsonic) server. The source stays
+      # hidden until all three are set. Host networking: use an address the
+      # host can reach, e.g. http://127.0.0.1:4533, not a service name.
+      MISONOS_NAVIDROME_SERVER_URL: "${MISONOS_NAVIDROME_SERVER_URL:-}"
+      MISONOS_NAVIDROME_USER: "${MISONOS_NAVIDROME_USER:-}"
+      MISONOS_NAVIDROME_PASSWORD: "${MISONOS_NAVIDROME_PASSWORD:-}"
+      # Speakers load cover art from this service directly, so advertise the LAN IP.
+      MISONOS_NAVIDROME_PUBLIC_URL: "http://${MISONOS_LAN_IP}:4325"
 
   web:
     build:

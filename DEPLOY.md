@@ -160,6 +160,13 @@ only while editing code.
 - **TuneIn** internet radio works without a key (the RadioTime OPML directory).
   Pinned stations persist in `tunein.db`. Optionally set `MISONOS_TUNEIN_PARTNER_ID`
   + `MISONOS_TUNEIN_SERIAL` if you have TuneIn partner credentials.
+- **Navidrome** (or any Subsonic-compatible server) appears once
+  `MISONOS_NAVIDROME_SERVER_URL`, `MISONOS_NAVIDROME_USER` and
+  `MISONOS_NAVIDROME_PASSWORD` are set (in `.env` for Docker; in `~/.misonos/env`
+  for the macOS bundle). Files Sonos can't play, such as Opus, are transcoded to
+  MP3 by the server. Under Docker the URL must be reachable from the host network
+  (`http://127.0.0.1:4533` with Navidrome's port published), not a service name
+  like `http://navidrome:4533`. See [`apps/navidrome-smapi`](apps/navidrome-smapi/README.md).
 - **A missing Grateful DB** only breaks Grateful Dead browsing; the other sources
   and the bridge keep working.
 
@@ -175,3 +182,4 @@ only while editing code.
 | lma      | 4322            | bridge (Live Music Archive)      |
 | podcasts | 4323            | bridge (RSS podcasts)            |
 | tunein   | 4324            | bridge (TuneIn internet radio)   |
+| navidrome | 4325           | bridge + Sonos speakers (art)    |

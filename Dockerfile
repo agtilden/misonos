@@ -17,6 +17,7 @@ COPY apps/ytmusic-smapi/package.json apps/ytmusic-smapi/
 COPY apps/lma-smapi/package.json apps/lma-smapi/
 COPY apps/podcast-smapi/package.json apps/podcast-smapi/
 COPY apps/tunein-smapi/package.json apps/tunein-smapi/
+COPY apps/navidrome-smapi/package.json apps/navidrome-smapi/
 RUN npm ci
 COPY . .
 RUN npm run build

@@ -63,6 +63,8 @@ exposing a music source to your speakers:
 - `apps/lma-smapi`: the [Live Music Archive](https://archive.org/details/etree). (port 4322)
 - `apps/podcast-smapi`: podcasts (Apple Podcasts directory + Podcast Index). (port 4323)
 - `apps/tunein-smapi`: internet radio via the [TuneIn](https://tunein.com/radio/home/) directory. (port 4324)
+- `apps/navidrome-smapi`: your own library on [Navidrome](https://www.navidrome.org) or any
+  Subsonic-compatible server; Opus and other non-Sonos formats are transcoded on the fly. (port 4325)
 
 The web app talks to the bridge through a typed HTTP/SSE API. That boundary keeps the UI decoupled from the transport, so a native LAN transport could replace the local Node bridge without changing the web app.
 

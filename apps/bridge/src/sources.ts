@@ -31,7 +31,8 @@ const DEFAULT_SOURCES: SourceConfig[] = [
   { id: "youtube-music", baseUrl: process.env.MISONOS_YTM_URL ?? "http://127.0.0.1:4321" },
   { id: "live-music-archive", baseUrl: process.env.MISONOS_LMA_URL ?? "http://127.0.0.1:4322" },
   { id: "podcasts", baseUrl: process.env.MISONOS_PODCAST_URL ?? "http://127.0.0.1:4323" },
-  { id: "tunein", baseUrl: process.env.MISONOS_TUNEIN_URL ?? "http://127.0.0.1:4324" }
+  { id: "tunein", baseUrl: process.env.MISONOS_TUNEIN_URL ?? "http://127.0.0.1:4324" },
+  { id: "navidrome", baseUrl: process.env.MISONOS_NAVIDROME_URL ?? "http://127.0.0.1:4325" }
 ];
 
 const FETCH_TIMEOUT_MS = 8000;
