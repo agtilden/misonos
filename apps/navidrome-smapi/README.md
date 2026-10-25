@@ -37,9 +37,15 @@ not at Navidrome.
 
 ## Notes & limitations
 
-- **Seeking in transcoded tracks** works by mapping Sonos's byte Range to a
-  `timeOffset` on the transcode, which assumes constant-bitrate MP3. With another
-  `TRANSCODE_FORMAT`, transcoded tracks play but can't be seeked.
+- **Transcoded tracks are sized up front.** Sonos wants a Content-Length and seeks
+  with byte ranges, which a transcode can't give until it's done. For constant-bitrate
+  MP3, bytes map linearly to time: the response claims the song's duration (plus a
+  second) at the transcode's bitrate — predicted from the song, then read off its
+  first frame — and is cut or zero-padded to exactly that. A Range becomes a
+  `timeOffset`. HEAD requests are answered without starting a transcode. With
+  another `TRANSCODE_FORMAT`, transcoded tracks stream unsized and can't be seeked.
+- Proxies in front of the server (e.g. a Cloudflare tunnel) can drop Content-Length
+  from full responses; for files streamed raw it's restored from the file size.
 - Browse lists aren't paged (the bridge has no paging): A–Z loads the whole album
   list, and Artists, Genres, Playlists and A–Z are cached for five minutes.
 - Starring, ratings and scrobbling aren't wired up yet.

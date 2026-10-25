@@ -19,6 +19,8 @@ export interface SubsonicSong {
   discNumber?: number;
   year?: number;
   duration?: number; // seconds
+  bitRate?: number; // kbps
+  size?: number; // bytes
   suffix?: string;
   contentType?: string;
   coverArt?: string;
